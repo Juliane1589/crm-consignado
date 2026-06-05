@@ -25,6 +25,13 @@ DATABASE_URL          = os.environ.get('DATABASE_URL', '')
 def get_conn():
     return psycopg2.connect(DATABASE_URL, sslmode='require')
 
+def normalizar_numero(numero):
+    n = ''.join(filter(str.isdigit, numero))
+    if n.startswith('0'): n = n[1:]
+    if not n.startswith('55'): n = '55' + n
+    if len(n) == 12: n = n[:4] + '9' + n[4:]
+    return n
+
 def init_db():
     conn = get_conn()
     cur  = conn.cursor()
@@ -38,6 +45,17 @@ def init_db():
         CREATE TABLE IF NOT EXISTS mensagens (
             numero TEXT PRIMARY KEY,
             dados JSONB NOT NULL
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS disparos (
+            id SERIAL PRIMARY KEY,
+            data_hora TIMESTAMP DEFAULT NOW(),
+            template TEXT,
+            total INTEGER,
+            enviados INTEGER,
+            erros INTEGER,
+            log JSONB
         )
     """)
     conn.commit(); cur.close(); conn.close()
@@ -110,11 +128,31 @@ def salvar_conversa(numero, dados):
         print(f"Erro salvar_conversa: {e}")
 
 # ── WHATSAPP ──────────────────────────────────────────────────────────────────
+def salvar_disparo(template, total, enviados, erros, log):
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO disparos (template, total, enviados, erros, log)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (template, total, enviados, erros, json.dumps(log, ensure_ascii=False)))
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        print(f"Erro salvar_disparo: {e}")
+
+def carregar_historico_disparos():
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT id, data_hora, template, total, enviados, erros, log FROM disparos ORDER BY data_hora DESC LIMIT 50")
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return [{"id":r[0],"data_hora":r[1].strftime('%d/%m/%Y %H:%M'),"template":r[2],"total":r[3],"enviados":r[4],"erros":r[5],"log":r[6]} for r in rows]
+    except Exception as e:
+        print(f"Erro carregar_historico: {e}")
+        return []
+
 def enviar_whatsapp(telefone, mensagem):
     import urllib.request
-    numero = ''.join(filter(str.isdigit, telefone))
-    if numero.startswith('0'): numero = numero[1:]
-    if not numero.startswith('55'): numero = '55' + numero
+    numero = normalizar_numero(telefone)
     payload = json.dumps({
         "messaging_product": "whatsapp", "to": numero,
         "type": "text", "text": {"body": mensagem}
@@ -133,9 +171,7 @@ def enviar_whatsapp(telefone, mensagem):
 
 def enviar_template(telefone, template_name, nome_cliente):
     import urllib.request
-    numero = ''.join(filter(str.isdigit, telefone))
-    if numero.startswith('0'): numero = numero[1:]
-    if not numero.startswith('55'): numero = '55' + numero
+    numero = normalizar_numero(telefone)
     payload = json.dumps({
         "messaging_product": "whatsapp", "to": numero, "type": "template",
         "template": {
@@ -434,6 +470,9 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
     </button>
 
     <div class="nav-section">Ferramentas</div>
+    <button class="nav-btn" onclick="showPage('historico',this)" data-page="historico">
+      <span class="nav-icon">📋</span> Histórico disparos
+    </button>
     <button class="nav-btn" onclick="showPage('disparos',this)" data-page="disparos">
       <span class="nav-icon">⚡</span> Disparos em massa
     </button>
@@ -607,6 +646,7 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
             <div class="cw-contact-num" id="chat-num"></div>
           </div>
         </div>
+        <div id="chat-perfil" style="display:none;overflow-y:auto;max-height:160px;flex-shrink:0"></div>
         <div class="cw-body" id="chat-msgs"></div>
         <div class="cw-footer">
           <input type="text" id="chat-input" placeholder="Digite uma mensagem..."
@@ -616,6 +656,15 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
       </div>
     </div>
   </div>
+</div>
+
+<!-- HISTÓRICO DE DISPAROS -->
+<div id="page-historico" class="page">
+  <div class="page-header">
+    <div class="page-title">Histórico de disparos</div>
+    <div class="page-sub">Registro de todos os envios em massa</div>
+  </div>
+  <div id="historico-lista"></div>
 </div>
 
 <!-- DISPAROS EM MASSA -->
@@ -838,6 +887,7 @@ function showPage(name, btn) {
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
   if (btn) btn.classList.add('active');
+  if (name==='historico') renderHistorico();
   if (name==='disparos') { popularFiltroDisparo(); filtrarParaDisparo(); }
   if (name==='lista') { paginaAtual=1; filtrarLista(); }
   if (name==='dashboard') renderDashboard();
@@ -1157,15 +1207,59 @@ function renderListaMensagens() {
 }
 
 function abrirChatTel(tel, nome) {
-  const num='55'+tel.replace(/\D/g,'').replace(/^0/,'').replace(/^55/,'');
+  // Normaliza número igual ao backend
+  let num = tel.replace(/\D/g,'');
+  if (num.startsWith('0')) num = num.slice(1);
+  if (!num.startsWith('55')) num = '55' + num;
+  if (num.length === 12) num = num.slice(0,4) + '9' + num.slice(4);
   showPage('mensagens', document.querySelector('[data-page="mensagens"]'));
   setTimeout(()=>abrirChat(num, nome), 100);
 }
 
 function abrirChat(numero, nome) {
   chatAtual=numero;
-  document.getElementById('chat-nome').textContent=nome;
-  document.getElementById('chat-num').textContent=numero;
+  // Tenta achar cliente pelo número
+  const cli = clientes.find(c => {
+    let t = c.tel1?.replace(/\D/g,'') || '';
+    if (t.startsWith('0')) t = t.slice(1);
+    if (!t.startsWith('55')) t = '55' + t;
+    if (t.length === 12) t = t.slice(0,4) + '9' + t.slice(4);
+    return t === numero;
+  });
+  const nomeExibir = cli ? cli.nome : (conversas[numero]?.nome || nome);
+  document.getElementById('chat-nome').textContent = nomeExibir;
+  document.getElementById('chat-num').textContent = numero;
+
+  // Renderiza perfil do cliente
+  const perfil = document.getElementById('chat-perfil');
+  if (cli) {
+    const sb = cli.fechou==='sim'?'badge-fechou':cli.fechou==='carteira'?'badge-carteira':'badge-negoc';
+    const sl = cli.fechou==='sim'?'Fechou':cli.fechou==='carteira'?'Carteira':'Em negociação';
+    perfil.innerHTML = `
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Cadastro do cliente</span>
+          <button class="btn btn-edit btn-sm" onclick="editarCliente(${cli.id})">✏ Editar</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:12px">
+          <div class="cc-field">CPF: <strong>${cli.cpf||'—'}</strong></div>
+          <div class="cc-field">Convênio: <strong>${cli.convenio||'—'}${cli.prefeitura?' · '+cli.prefeitura:''}</strong></div>
+          <div class="cc-field">Margem: <strong>${cli.margem?'R$ '+cli.margem:'—'}</strong></div>
+          <div class="cc-field">Retorno: <strong>${cli.dataRetorno||'—'}</strong></div>
+          <div class="cc-field">Status: <span class="badge ${sb}">${sl}</span></div>
+          ${cli.obs?`<div class="cc-field" style="grid-column:1/-1">Obs: <strong>${cli.obs}</strong></div>`:''}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" style="background:var(--green-dim);color:var(--green-text);border:1px solid #2ECC7130" onclick="marcarFechou(${cli.id})">✓ Fechou</button>
+          <button class="btn btn-sm" style="background:var(--amber-dim);color:var(--amber-text);border:1px solid #F59E0B30" onclick="agendarRetorno(${cli.id})">◷ Agendar retorno</button>
+        </div>
+      </div>`;
+    perfil.style.display = 'block';
+  } else {
+    perfil.innerHTML = '';
+    perfil.style.display = 'none';
+  }
+
   document.getElementById('chat-empty').style.display='none';
   document.getElementById('chat-open').style.display='flex';
   if (conversas[numero]) {
@@ -1178,13 +1272,40 @@ function abrirChat(numero, nome) {
   document.getElementById('chat-input').focus();
 }
 
+async function marcarFechou(id) {
+  const c = clientes.find(x=>x.id===id); if(!c) return;
+  c.fechou = 'sim';
+  await fetch('/api/salvar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientes:[c]})});
+  toast('Cliente marcado como fechou!');
+  abrirChat(chatAtual, c.nome);
+}
+
+async function agendarRetorno(id) {
+  const data = prompt('Data de retorno (AAAA-MM-DD):');
+  if (!data) return;
+  const c = clientes.find(x=>x.id===id); if(!c) return;
+  c.dataRetorno = data;
+  await fetch('/api/salvar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientes:[c]})});
+  toast('Retorno agendado!');
+  abrirChat(chatAtual, c.nome);
+  tickBadges();
+}
+
 function renderChat() {
   const el=document.getElementById('chat-msgs');
   const conv=conversas[chatAtual];
   if (!conv||!conv.msgs?.length) { el.innerHTML='<div class="empty"><div class="empty-text">Nenhuma mensagem ainda</div></div>'; return; }
+  let ultimaData = '';
   el.innerHTML=conv.msgs.map(m=>{
-    const hora=new Date(m.ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    return `<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">
+    const d = new Date(m.ts);
+    const dataStr = d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+    const hora = d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    let separador = '';
+    if (dataStr !== ultimaData) {
+      ultimaData = dataStr;
+      separador = `<div style="text-align:center;margin:8px 0"><span style="background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">${dataStr}</span></div>`;
+    }
+    return `${separador}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">
       ${m.texto}
       <div class="msg-time">${hora}</div>
     </div>`;
@@ -1289,6 +1410,41 @@ async function importarDados() {
   cancelarImport();
   renderDashboard(); tickBadges();
   document.getElementById('sf-total').textContent=`${clientes.length} clientes`;
+}
+
+async function renderHistorico() {
+  const el = document.getElementById('historico-lista');
+  el.innerHTML = '<div class="empty"><div class="loading"></div></div>';
+  try {
+    const r = await fetch('/api/disparos/historico');
+    const lista = await r.json();
+    if (!lista.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Nenhum disparo realizado ainda</div></div>';
+      return;
+    }
+    el.innerHTML = lista.map(d => `
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div>
+            <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:15px">${d.template}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">${d.data_hora}</div>
+          </div>
+          <div style="display:flex;gap:12px">
+            <div style="text-align:center"><div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:var(--green-text)">${d.enviados}</div><div style="font-size:10px;color:var(--muted)">enviados</div></div>
+            <div style="text-align:center"><div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:var(--red-text)">${d.erros}</div><div style="font-size:10px;color:var(--muted)">erros</div></div>
+            <div style="text-align:center"><div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:var(--text)">${d.total}</div><div style="font-size:10px;color:var(--muted)">total</div></div>
+          </div>
+        </div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace">Ver log detalhado</summary>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px;max-height:200px;overflow-y:auto;font-family:'DM Mono',monospace;font-size:11px">
+            ${(d.log||[]).map(l=>`<div style="color:${l.ok?'var(--green-text)':'var(--red-text)'};margin-bottom:2px">${l.ok?'✓':'✕'} ${l.nome} (${l.tel}) ${l.ok?'— enviado':'— '+l.erro}</div>`).join('')}
+          </div>
+        </details>
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = '<div class="empty"><div class="empty-text">Erro ao carregar histórico</div></div>';
+  }
 }
 
 // ── DISPAROS EM MASSA ─────────────────────────────────────────────────────────
@@ -1414,6 +1570,7 @@ async function iniciarDisparo() {
   }
 
   addLog(`Iniciando disparo: ${total} clientes · template: ${template}`, 'info');
+  const logDetalhado = [];
 
   for (let i = 0; i < clientesParaDisparar.length; i++) {
     // Checa cancelamento
@@ -1434,10 +1591,12 @@ async function iniciarDisparo() {
       const d = await r.json();
       if (d.messages || d.ok) {
         enviados++;
+        logDetalhado.push({ok:true, nome:c.nome, tel:c.tel1});
         addLog(`✓ ${c.nome} — enviado`, 'ok');
       } else {
         erros++;
         const motivo = d.erro ? JSON.parse(d.erro)?.error?.message || d.erro : JSON.stringify(d);
+        logDetalhado.push({ok:false, nome:c.nome, tel:c.tel1, erro:motivo});
         addLog(`✕ ${c.nome} — ${motivo}`, 'erro');
       }
     } catch(e) {
@@ -1455,6 +1614,9 @@ async function iniciarDisparo() {
   }
 
   addLog(`Disparo finalizado. ✓ ${enviados} enviados · ✕ ${erros} erros`, 'ok');
+  // Salvar histórico
+  await fetch('/api/disparos/salvar', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({template, total, enviados, erros, log: logDetalhado})});
   document.getElementById('btn-cancelar-disparo').textContent = '← Novo disparo';
   document.getElementById('btn-cancelar-disparo').onclick = resetarDisparo;
   disparoAtivo = false;
@@ -1515,7 +1677,11 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(m.get('conversas',{}), ensure_ascii=False).encode('utf-8'))
             return
 
-        if parsed.path == '/api/disparo/status':
+        if parsed.path == '/api/disparos/historico':
+            hist = carregar_historico_disparos()
+            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+            self.wfile.write(json.dumps(hist, ensure_ascii=False).encode('utf-8'))
+            return
             self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
             self.wfile.write(json.dumps(disparo_status).encode('utf-8'))
             return
@@ -1538,6 +1704,7 @@ class Handler(BaseHTTPRequestHandler):
                             texto     = msg.get('text', {}).get('body', '')
                             if texto:
                                 print(f"📩 {remetente}: {texto}")
+                                remetente = normalizar_numero(remetente)
                                 msgs = carregar_mensagens()
                                 conv = msgs['conversas']
                                 if remetente not in conv:
@@ -1583,6 +1750,14 @@ class Handler(BaseHTTPRequestHandler):
                 salvar_cliente(c)
             self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
             self.wfile.write(json.dumps({"ok": True, "importados": len(novos)}).encode())
+            return
+
+        if self.path == '/api/disparos/salvar':
+            length = int(self.headers['Content-Length'])
+            body   = json.loads(self.rfile.read(length))
+            salvar_disparo(body.get('template',''), body.get('total',0), body.get('enviados',0), body.get('erros',0), body.get('log',[]))
+            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+            self.wfile.write(b'{"ok":true}')
             return
 
         if self.path == '/api/disparo/enviar':
