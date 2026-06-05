@@ -1306,7 +1306,8 @@ function renderChat() {
       separador = `<div style="text-align:center;margin:8px 0"><span style="background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">${dataStr}</span></div>`;
     }
     return `${separador}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">
-      ${m.texto}
+      ${m.imagem_id ? `<img src="/api/imagem/${m.imagem_id}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:4px" onclick="this.style.maxWidth=this.style.maxWidth==='100%'?'none':'100%'" loading="lazy">` : ''}
+      ${m.texto && !m.texto.startsWith('[IMAGEM:') ? m.texto : (m.texto?.startsWith('[IMAGEM:') && !m.imagem_id ? '🖼 Imagem' : '')}
       <div class="msg-time">${hora}</div>
     </div>`;
   }).join('');
@@ -1682,8 +1683,25 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
             self.wfile.write(json.dumps(hist, ensure_ascii=False).encode('utf-8'))
             return
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps(disparo_status).encode('utf-8'))
+
+        if parsed.path.startswith('/api/imagem/'):
+            imagem_id = parsed.path.split('/api/imagem/')[-1]
+            try:
+                import urllib.request as ur
+                req1 = ur.Request(f"https://graph.facebook.com/v20.0/{imagem_id}",
+                    headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+                with ur.urlopen(req1) as r1:
+                    info = json.loads(r1.read())
+                img_url = info.get('url','')
+                req2 = ur.Request(img_url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+                with ur.urlopen(req2) as r2:
+                    img_data = r2.read()
+                    content_type = r2.headers.get('Content-Type','image/jpeg')
+                self.send_response(200); self.send_header('Content-type', content_type); self.end_headers()
+                self.wfile.write(img_data)
+            except Exception as e:
+                print(f"Erro buscar imagem: {e}")
+                self.send_response(404); self.end_headers()
             return
 
         if self.path in ('/', '/index.html'):
@@ -1702,6 +1720,22 @@ class Handler(BaseHTTPRequestHandler):
                         for msg in change.get('value', {}).get('messages', []):
                             remetente = msg.get('from', '')
                             texto     = msg.get('text', {}).get('body', '')
+                            tipo      = msg.get('type', 'text')
+                            # Suporte a imagens
+                            imagem_id = None
+                            if tipo == 'image':
+                                imagem_id = msg.get('image', {}).get('id', '')
+                                caption   = msg.get('image', {}).get('caption', '')
+                                texto     = f'[IMAGEM:{imagem_id}]' + (f' {caption}' if caption else '')
+                            elif tipo == 'audio':
+                                texto = '[ÁUDIO]'
+                            elif tipo == 'video':
+                                texto = '[VÍDEO]'
+                            elif tipo == 'document':
+                                nome_doc = msg.get('document', {}).get('filename', 'documento')
+                                texto = f'[DOCUMENTO: {nome_doc}]'
+                            elif tipo == 'sticker':
+                                texto = '[FIGURINHA]'
                             if texto:
                                 print(f"📩 {remetente}: {texto}")
                                 remetente = normalizar_numero(remetente)
@@ -1715,7 +1749,9 @@ class Handler(BaseHTTPRequestHandler):
                                         if not t.startswith('55'): t = '55'+t
                                         if t == remetente: nome = c.get('nome', remetente); break
                                     conv[remetente] = {'numero': remetente, 'nome': nome, 'msgs': []}
-                                conv[remetente]['msgs'].append({'dir':'recv','texto':texto,'ts':int(time.time()*1000),'lida':False})
+                                entrada = {'dir':'recv','texto':texto,'ts':int(time.time()*1000),'lida':False,'tipo':tipo}
+                                if imagem_id: entrada['imagem_id'] = imagem_id
+                                conv[remetente]['msgs'].append(entrada)
                                 salvar_conversa(remetente, conv[remetente])
             except Exception as e:
                 print(f"Erro webhook: {e}")
