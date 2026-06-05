@@ -1575,8 +1575,9 @@ async function iniciarDisparo() {
 
   for (let i = 0; i < clientesParaDisparar.length; i++) {
     // Checa cancelamento
-    const status = await fetch('/api/disparo/status').then(r=>r.json());
-    if (status.cancelar) { addLog('Disparo cancelado pelo usuário.', 'erro'); break; }
+    let cancelar = false;
+    try { const status = await fetch('/api/disparo/status').then(r=>r.json()); cancelar = status.cancelar; } catch(e) {}
+    if (cancelar) { addLog('Disparo cancelado pelo usuário.', 'erro'); break; }
 
     const c = clientesParaDisparar[i];
     const nomeUsar = c.nome.split(' ')[0]; // primeiro nome
@@ -1808,6 +1809,11 @@ class Handler(BaseHTTPRequestHandler):
             disparo_status['cancelar'] = True
             self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
             self.wfile.write(b'{"ok":true}')
+            return
+
+        if self.path == '/api/disparo/status':
+            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+            self.wfile.write(json.dumps(disparo_status).encode('utf-8'))
             return
 
         if self.path == '/api/disparo/resetar':
