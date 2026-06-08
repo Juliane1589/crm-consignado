@@ -1673,12 +1673,12 @@ async function iniciarDisparoColar() {
       const r = await fetch('/api/disparo/enviar', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({telefone: c.tel1, template, nome})
+        body: JSON.stringify({telefone: c.tel1, template, nome: c.nome})
       });
       const d = await r.json();
       if (d.messages || d.ok) {
         enviados++;
-        addLog(`✓ ${c.tel1} — enviado`, 'ok');
+        addLog(`✓ ${c.tel1} (${c.nome}) — enviado`, 'ok');
       } else {
         erros++;
         const motivo = d.erro ? JSON.parse(d.erro)?.error?.message || d.erro : JSON.stringify(d);
