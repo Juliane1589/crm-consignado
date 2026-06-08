@@ -765,7 +765,7 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
     </div>
     <div class="fg full" style="margin-top:12px">
       <label>Cole os números aqui (um por linha, ou separados por vírgula)</label>
-      <textarea id="colar-numeros" rows="8" placeholder="11999990001&#10;11999990002&#10;11999990003&#10;&#10;Ou: 11999990001, 11999990002, 11999990003" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;color:var(--text);font-family:'DM Mono',monospace;font-size:13px;resize:vertical"></textarea>
+      <textarea id="colar-numeros" rows="8" placeholder="45999990001&#10;45999990002, João Silva&#10;45999990003, Maria Santos&#10;&#10;Sem nome: usa o nome padrão acima&#10;Com nome: usa o primeiro nome da pessoa" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;color:var(--text);font-family:'DM Mono',monospace;font-size:13px;resize:vertical"></textarea>
     </div>
     <div style="display:flex;align-items:center;gap:16px;margin-top:12px">
       <button class="btn btn-primary" onclick="iniciarDisparoColar()">⚡ Iniciar disparo</button>
@@ -1596,27 +1596,45 @@ function trocarAbaDisparo(aba) {
 document.addEventListener('DOMContentLoaded', () => {
   const ta = document.getElementById('colar-numeros');
   if (ta) ta.addEventListener('input', () => {
-    const nums = extrairNumeros(ta.value);
-    document.getElementById('colar-count').textContent = nums.length + ' números detectados';
+    const contatos = extrairContatos(ta.value);
+    const comNome = contatos.filter(c => c.nome !== (document.getElementById('colar-nome').value.trim()||'Servidor')).length;
+    document.getElementById('colar-count').textContent = contatos.length + ' números detectados' + (comNome ? ` · ${comNome} com nome` : '');
   });
 });
 
-function extrairNumeros(texto) {
-  return texto.split(/[,\n\r;]/).map(n => n.replace(/\D/g,'')).filter(n => n.length >= 10 && n.length <= 13);
+function extrairContatos(texto) {
+  // Cada linha pode ser: "número" ou "número, nome" ou "número nome"
+  const nomeDefault = document.getElementById('colar-nome').value.trim() || 'Servidor';
+  const contatos = [];
+  const linhas = texto.split(/[\n\r]+/).map(l => l.trim()).filter(l => l);
+  for (const linha of linhas) {
+    // Separa por vírgula ou tab
+    const partes = linha.split(/[,\t]/).map(p => p.trim());
+    let numero = '', nome = nomeDefault;
+    for (const p of partes) {
+      const apenasNum = p.replace(/\D/g,'');
+      if (apenasNum.length >= 10 && apenasNum.length <= 13) {
+        numero = apenasNum;
+      } else if (p.length > 1) {
+        nome = p.split(' ')[0]; // primeiro nome
+      }
+    }
+    if (numero) contatos.push({ tel1: numero, nome });
+  }
+  return contatos;
 }
 
 async function iniciarDisparoColar() {
   const texto    = document.getElementById('colar-numeros').value;
-  const numeros  = extrairNumeros(texto);
+  const contatos = extrairContatos(texto);
   const template = document.getElementById('colar-template').value;
   const intervalo= parseInt(document.getElementById('colar-intervalo').value);
-  const nome     = document.getElementById('colar-nome').value.trim() || 'Servidor';
 
-  if (!numeros.length) { toast('Nenhum número válido detectado', 'error'); return; }
-  if (!confirm(`Confirma disparo do template "${template}" para ${numeros.length} números?\n\nIntervalo: ${intervalo} segundos entre cada mensagem.`)) return;
+  if (!contatos.length) { toast('Nenhum número válido detectado', 'error'); return; }
+  if (!confirm(`Confirma disparo do template "${template}" para ${contatos.length} contatos?\n\nIntervalo: ${intervalo} segundos entre cada mensagem.`)) return;
 
   // Montar lista no formato esperado
-  const clientesParaDisparar = numeros.map(n => ({ nome, tel1: n }));
+  const clientesParaDisparar = contatos;
 
   document.getElementById('disparo-colar').style.display    = 'none';
   document.getElementById('disparo-progresso').style.display = 'block';
