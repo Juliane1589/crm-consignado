@@ -1307,7 +1307,8 @@ function renderChat() {
     }
     return `${separador}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">
       ${m.imagem_id ? `<img src="/api/imagem/${m.imagem_id}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:4px" onclick="this.style.maxWidth=this.style.maxWidth==='100%'?'none':'100%'" loading="lazy">` : ''}
-      ${m.texto && !m.texto.startsWith('[IMAGEM:') ? m.texto : (m.texto?.startsWith('[IMAGEM:') && !m.imagem_id ? '🖼 Imagem' : '')}
+      ${m.doc_id ? `<a href="/api/documento/${m.doc_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--blue-text);text-decoration:none;font-size:12px">📄 ${m.doc_nome||'Documento'}</a>` : ''}
+      ${m.texto && !m.texto.startsWith('[IMAGEM:') && !m.texto.startsWith('[DOCUMENTO:') ? m.texto : (m.texto?.startsWith('[IMAGEM:') && !m.imagem_id ? '🖼 Imagem' : (m.texto?.startsWith('[DOCUMENTO:') && !m.doc_id ? '📄 Documento' : ''))}
       <div class="msg-time">${hora}</div>
     </div>`;
   }).join('');
@@ -1705,7 +1706,30 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(404); self.end_headers()
             return
 
-        if self.path in ('/', '/index.html'):
+        if parsed.path.startswith('/api/documento/'):
+            doc_id = parsed.path.split('/api/documento/')[-1]
+            try:
+                import urllib.request as ur
+                req1 = ur.Request(f'https://graph.facebook.com/v20.0/{doc_id}',
+                    headers={'Authorization': f'Bearer {WHATSAPP_TOKEN}'})
+                with ur.urlopen(req1) as r1:
+                    info = json.loads(r1.read())
+                doc_url = info.get('url','')
+                req2 = ur.Request(doc_url, headers={'Authorization': f'Bearer {WHATSAPP_TOKEN}'})
+                with ur.urlopen(req2) as r2:
+                    doc_data = r2.read()
+                    content_type = r2.headers.get('Content-Type','application/pdf')
+                self.send_response(200)
+                self.send_header('Content-type', content_type)
+                self.send_header('Content-Disposition', 'attachment')
+                self.end_headers()
+                self.wfile.write(doc_data)
+            except Exception as e:
+                print(f'Erro buscar documento: {e}')
+                self.send_response(404); self.end_headers()
+            return
+
+        if parsed.path in ('/', '/index.html'):
             self.send_response(200); self.send_header('Content-type','text/html; charset=utf-8'); self.end_headers()
             self.wfile.write(HTML.encode('utf-8'))
         else:
@@ -1734,6 +1758,7 @@ class Handler(BaseHTTPRequestHandler):
                                 texto = '[VÍDEO]'
                             elif tipo == 'document':
                                 nome_doc = msg.get('document', {}).get('filename', 'documento')
+                                doc_id   = msg.get('document', {}).get('id', '')
                                 texto = f'[DOCUMENTO: {nome_doc}]'
                             elif tipo == 'sticker':
                                 texto = '[FIGURINHA]'
@@ -1752,6 +1777,7 @@ class Handler(BaseHTTPRequestHandler):
                                     conv[remetente] = {'numero': remetente, 'nome': nome, 'msgs': []}
                                 entrada = {'dir':'recv','texto':texto,'ts':int(time.time()*1000),'lida':False,'tipo':tipo}
                                 if imagem_id: entrada['imagem_id'] = imagem_id
+                                if tipo == 'document' and doc_id: entrada['doc_id'] = doc_id; entrada['doc_nome'] = nome_doc
                                 conv[remetente]['msgs'].append(entrada)
                                 salvar_conversa(remetente, conv[remetente])
             except Exception as e:
