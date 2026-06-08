@@ -1746,8 +1746,10 @@ class Handler(BaseHTTPRequestHandler):
                             remetente = msg.get('from', '')
                             texto     = msg.get('text', {}).get('body', '')
                             tipo      = msg.get('type', 'text')
-                            # Suporte a imagens
+                            # Suporte a imagens e documentos
                             imagem_id = None
+                            doc_id    = None
+                            nome_doc  = ''
                             if tipo == 'image':
                                 imagem_id = msg.get('image', {}).get('id', '')
                                 caption   = msg.get('image', {}).get('caption', '')
@@ -1924,4 +1926,3 @@ if __name__ == '__main__':
     print(f"🚀 CRM Consignado iniciando na porta {PORT}")
     server = HTTPServer(('0.0.0.0', PORT), Handler)
     server.serve_forever()
- 
