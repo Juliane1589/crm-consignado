@@ -675,6 +675,12 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
   </div>
 
   <!-- CONFIGURAÇÃO -->
+  <!-- ABAS -->
+  <div style="display:flex;gap:8px;margin-bottom:16px">
+    <button id="aba-carteira" onclick="trocarAbaDisparo('carteira')" class="btn btn-primary" style="font-size:13px">📋 Da carteira</button>
+    <button id="aba-colar" onclick="trocarAbaDisparo('colar')" class="btn" style="font-size:13px;background:var(--surface2);color:var(--text)">📋 Colar números</button>
+  </div>
+
   <div class="card" id="disparo-config">
     <div class="card-title">⚡ Configurar disparo</div>
 
@@ -730,6 +736,40 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
     <div class="btn-row">
       <button class="btn btn-primary" onclick="iniciarDisparo()" id="btn-disparar">⚡ Iniciar disparo</button>
       <span style="font-size:12px;color:var(--muted)">Apenas clientes com telefone cadastrado aparecem na lista</span>
+    </div>
+  </div>
+
+  <!-- COLAR NÚMEROS -->
+  <div class="card" id="disparo-colar" style="display:none">
+    <div class="card-title">📋 Disparar para números colados</div>
+    <div class="form-grid">
+      <div class="fg">
+        <label>Template aprovado</label>
+        <select id="colar-template">
+          <option value="aumento_margem_foz">aumento_margem_foz — Prefeitura de Foz</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Intervalo entre mensagens</label>
+        <select id="colar-intervalo">
+          <option value="30">30 segundos (mais seguro)</option>
+          <option value="20">20 segundos</option>
+          <option value="10">10 segundos (mais risco)</option>
+          <option value="60">60 segundos (mais cauteloso)</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Nome padrão (usado no template)</label>
+        <input type="text" id="colar-nome" placeholder="Ex: Servidor" value="Servidor">
+      </div>
+    </div>
+    <div class="fg full" style="margin-top:12px">
+      <label>Cole os números aqui (um por linha, ou separados por vírgula)</label>
+      <textarea id="colar-numeros" rows="8" placeholder="11999990001&#10;11999990002&#10;11999990003&#10;&#10;Ou: 11999990001, 11999990002, 11999990003" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;color:var(--text);font-family:'DM Mono',monospace;font-size:13px;resize:vertical"></textarea>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;margin-top:12px">
+      <button class="btn btn-primary" onclick="iniciarDisparoColar()">⚡ Iniciar disparo</button>
+      <span id="colar-count" style="font-size:13px;color:var(--muted)">0 números detectados</span>
     </div>
   </div>
 
@@ -1539,6 +1579,107 @@ function toggleTodos(checkbox) {
 
 function atualizarContadorDisparo() {
   document.getElementById('d-count').textContent = `${clientesParaDisparar.length} selecionados`;
+}
+
+function trocarAbaDisparo(aba) {
+  document.getElementById('disparo-config').style.display = aba === 'carteira' ? 'block' : 'none';
+  document.getElementById('disparo-colar').style.display  = aba === 'colar'    ? 'block' : 'none';
+  document.getElementById('aba-carteira').className = aba === 'carteira' ? 'btn btn-primary' : 'btn';
+  document.getElementById('aba-carteira').style.background = aba === 'carteira' ? '' : 'var(--surface2)';
+  document.getElementById('aba-carteira').style.color = aba === 'carteira' ? '' : 'var(--text)';
+  document.getElementById('aba-colar').className = aba === 'colar' ? 'btn btn-primary' : 'btn';
+  document.getElementById('aba-colar').style.background = aba === 'colar' ? '' : 'var(--surface2)';
+  document.getElementById('aba-colar').style.color = aba === 'colar' ? '' : 'var(--text)';
+}
+
+// Contar números ao digitar
+document.addEventListener('DOMContentLoaded', () => {
+  const ta = document.getElementById('colar-numeros');
+  if (ta) ta.addEventListener('input', () => {
+    const nums = extrairNumeros(ta.value);
+    document.getElementById('colar-count').textContent = nums.length + ' números detectados';
+  });
+});
+
+function extrairNumeros(texto) {
+  return texto.split(/[,\n\r;]/).map(n => n.replace(/\D/g,'')).filter(n => n.length >= 10 && n.length <= 13);
+}
+
+async function iniciarDisparoColar() {
+  const texto    = document.getElementById('colar-numeros').value;
+  const numeros  = extrairNumeros(texto);
+  const template = document.getElementById('colar-template').value;
+  const intervalo= parseInt(document.getElementById('colar-intervalo').value);
+  const nome     = document.getElementById('colar-nome').value.trim() || 'Servidor';
+
+  if (!numeros.length) { toast('Nenhum número válido detectado', 'error'); return; }
+  if (!confirm(`Confirma disparo do template "${template}" para ${numeros.length} números?\n\nIntervalo: ${intervalo} segundos entre cada mensagem.`)) return;
+
+  // Montar lista no formato esperado
+  const clientesParaDisparar = numeros.map(n => ({ nome, tel1: n }));
+
+  document.getElementById('disparo-colar').style.display    = 'none';
+  document.getElementById('disparo-progresso').style.display = 'block';
+
+  const total = clientesParaDisparar.length;
+  let enviados = 0, erros = 0;
+
+  function addLog(msg, tipo='ok') {
+    const el = document.getElementById('prog-log');
+    const cor = tipo==='ok'?'var(--green-text)':tipo==='erro'?'var(--red-text)':'var(--muted)';
+    el.innerHTML += `<div style="color:${cor};margin-bottom:2px">${new Date().toLocaleTimeString('pt-BR')} — ${msg}</div>`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function atualizarProgresso() {
+    const pct = Math.round(((enviados+erros)/total)*100);
+    document.getElementById('prog-bar').style.width       = pct + '%';
+    document.getElementById('prog-nums').textContent      = `${enviados+erros}/${total}`;
+    document.getElementById('prog-enviados').textContent  = enviados;
+    document.getElementById('prog-erros').textContent     = erros;
+    document.getElementById('prog-restantes').textContent = total - enviados - erros;
+    document.getElementById('prog-texto').textContent     = pct < 100 ? `Enviando... ${pct}%` : 'Concluído!';
+  }
+
+  addLog(`Iniciando disparo: ${total} números · template: ${template}`, 'info');
+
+  for (let i = 0; i < clientesParaDisparar.length; i++) {
+    let cancelar = false;
+    try { const status = await fetch('/api/disparo/status').then(r=>r.json()); cancelar = status.cancelar; } catch(e) {}
+    if (cancelar) { addLog('Disparo cancelado pelo usuário.', 'erro'); break; }
+
+    const c = clientesParaDisparar[i];
+    addLog(`Enviando para ${c.tel1}...`, 'info');
+
+    try {
+      const r = await fetch('/api/disparo/enviar', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({telefone: c.tel1, template, nome})
+      });
+      const d = await r.json();
+      if (d.messages || d.ok) {
+        enviados++;
+        addLog(`✓ ${c.tel1} — enviado`, 'ok');
+      } else {
+        erros++;
+        const motivo = d.erro ? JSON.parse(d.erro)?.error?.message || d.erro : JSON.stringify(d);
+        addLog(`✕ ${c.tel1} — ${motivo}`, 'erro');
+      }
+    } catch(e) {
+      erros++;
+      addLog(`✕ ${c.tel1} — erro de conexão`, 'erro');
+    }
+
+    atualizarProgresso();
+    if (i < clientesParaDisparar.length - 1) {
+      addLog(`Aguardando ${intervalo}s...`, 'info');
+      await new Promise(res => setTimeout(res, intervalo * 1000));
+    }
+  }
+
+  addLog(`Disparo finalizado. ✓ ${enviados} enviados · ✕ ${erros} erros`, 'ok');
+  document.getElementById('btn-novo-disparo').style.display = 'inline-block';
 }
 
 async function iniciarDisparo() {
