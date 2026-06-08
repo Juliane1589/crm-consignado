@@ -1759,8 +1759,10 @@ class Handler(BaseHTTPRequestHandler):
                             elif tipo == 'video':
                                 texto = '[VÍDEO]'
                             elif tipo == 'document':
+                                print(f"📄 DEBUG doc: {json.dumps(msg.get('document',{}))}")
                                 nome_doc = msg.get('document', {}).get('filename', 'documento')
                                 doc_id   = msg.get('document', {}).get('id', '')
+                                print(f"📄 doc_id: [{doc_id}]")
                                 texto = f'[DOCUMENTO: {nome_doc}]'
                             elif tipo == 'sticker':
                                 texto = '[FIGURINHA]'
