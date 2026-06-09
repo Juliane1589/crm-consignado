@@ -688,6 +688,7 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
         <label>Template aprovado</label>
         <select id="d-template">
           <option value="aumento_margem_foz">aumento_margem_foz — Prefeitura de Foz</option>
+          <option value="credito_consignado_servidores">credito_consignado_servidores — Servidores Públicos</option>
         </select>
       </div>
       <div class="fg">
