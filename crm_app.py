@@ -2083,7 +2083,12 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(404); self.end_headers()
 
+from socketserver import ThreadingMixIn
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
 if __name__ == '__main__':
     print(f"🚀 CRM Consignado iniciando na porta {PORT}")
-    server = HTTPServer(('0.0.0.0', PORT), Handler)
+    server = ThreadedHTTPServer(('0.0.0.0', PORT), Handler)
     server.serve_forever()
