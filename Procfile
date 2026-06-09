@@ -1,1 +1,1 @@
-web: python crm_app.py
+web: gunicorn crm_app:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120
