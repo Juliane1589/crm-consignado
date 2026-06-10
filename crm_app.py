@@ -1584,4 +1584,4 @@ def api_preview():
 
 if __name__ == '__main__':
     print(f"🚀 CRM Consignado iniciando na porta {PORT}")
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host='0.0.0.0', port=PORT) 
