@@ -691,6 +691,7 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
           <option value="credito_consignado_servidores">credito_consignado_servidores — Servidores Públicos</option>
           <option value="aumento_margem_geral">aumento_margem_geral — Geral</option>
           <option value="consignado_convenios">consignado_convenios — Convênios</option>
+          <option value="consigandos_para_servidores_botao">consigandos_para_servidores_botao — Servidores c/ Botão</option>
         </select>
       </div>
       <div class="fg">
@@ -752,6 +753,7 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
           <option value="credito_consignado_servidores">credito_consignado_servidores — Servidores Públicos</option>
           <option value="aumento_margem_geral">aumento_margem_geral — Geral</option>
           <option value="consignado_convenios">consignado_convenios — Convênios</option>
+          <option value="consigandos_para_servidores_botao">consigandos_para_servidores_botao — Servidores c/ Botão</option>
         </select>
       </div>
       <div class="fg">
