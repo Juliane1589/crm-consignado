@@ -1,6 +1,6 @@
 """
 CRM Consignado - Juliane
-Railway + PostgreSQL
+Railway + PostgreSQL + Flask + Gunicorn
 """
 
 import json
@@ -8,9 +8,11 @@ import os
 import time
 import psycopg2
 import psycopg2.extras
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
 import pandas as pd
+import urllib.request
+from flask import Flask, request, Response, jsonify
+
+app = Flask(__name__)
 
 PORT = int(os.environ.get('PORT', 8765))
 
@@ -86,7 +88,6 @@ def salvar_cliente(c):
 def salvar_todos_clientes(lista):
     try:
         conn = get_conn(); cur = conn.cursor()
-        # Apaga todos e reinsere (usado na importação em massa)
         cur.execute("DELETE FROM clientes")
         for c in lista:
             cur.execute("""
@@ -127,7 +128,6 @@ def salvar_conversa(numero, dados):
     except Exception as e:
         print(f"Erro salvar_conversa: {e}")
 
-# ── WHATSAPP ──────────────────────────────────────────────────────────────────
 def salvar_disparo(template, total, enviados, erros, log):
     try:
         conn = get_conn(); cur = conn.cursor()
@@ -151,7 +151,6 @@ def carregar_historico_disparos():
         return []
 
 def enviar_whatsapp(telefone, mensagem):
-    import urllib.request
     numero = normalizar_numero(telefone)
     payload = json.dumps({
         "messaging_product": "whatsapp", "to": numero,
@@ -170,7 +169,6 @@ def enviar_whatsapp(telefone, mensagem):
     except Exception as e: return {"erro": str(e)}
 
 def enviar_template(telefone, template_name, nome_cliente):
-    import urllib.request
     numero = normalizar_numero(telefone)
     payload = json.dumps({
         "messaging_product": "whatsapp", "to": numero, "type": "template",
@@ -202,6 +200,7 @@ else:
     print("⚠️ DATABASE_URL não configurado!")
     dados_globais     = {"clientes": []}
     mensagens_globais = {"conversas": {}}
+
 
 HTML = r"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1814,283 +1813,234 @@ init();
 </body>
 </html>"""
 
-# ── HANDLER ───────────────────────────────────────────────────────────────────
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args): pass
 
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        if parsed.path == '/webhook':
-            params    = parse_qs(parsed.query)
-            mode      = params.get('hub.mode',      [''])[0]
-            token     = params.get('hub.verify_token', [''])[0]
-            challenge = params.get('hub.challenge', [''])[0]
-            if mode == 'subscribe' and token == WHATSAPP_VERIFY_TOKEN:
-                self.send_response(200); self.send_header('Content-type','text/plain'); self.end_headers()
-                self.wfile.write(challenge.encode()); print("✅ Webhook verificado!")
-            else:
-                self.send_response(403); self.end_headers()
-            return
+# ── ROTAS FLASK ───────────────────────────────────────────────────────────────
 
-        if parsed.path == '/api/clientes':
-            d = carregar_dados()
-            dados_globais['clientes'] = d['clientes']
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps(dados_globais, ensure_ascii=False).encode('utf-8'))
-            return
+@app.route('/')
+@app.route('/index.html')
+def index():
+    return Response(HTML, mimetype='text/html; charset=utf-8')
 
-        if parsed.path == '/api/mensagens':
-            m = carregar_mensagens()
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps(m.get('conversas',{}), ensure_ascii=False).encode('utf-8'))
-            return
+@app.route('/webhook', methods=['GET'])
+def webhook_verify():
+    mode      = request.args.get('hub.mode', '')
+    token     = request.args.get('hub.verify_token', '')
+    challenge = request.args.get('hub.challenge', '')
+    if mode == 'subscribe' and token == WHATSAPP_VERIFY_TOKEN:
+        print("✅ Webhook verificado!")
+        return Response(challenge, mimetype='text/plain')
+    return Response('Forbidden', status=403)
 
-        if parsed.path == '/api/disparos/historico':
-            hist = carregar_historico_disparos()
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps(hist, ensure_ascii=False).encode('utf-8'))
-            return
+@app.route('/webhook', methods=['POST'])
+def webhook_receive():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        for entry in body.get('entry', []):
+            for change in entry.get('changes', []):
+                for msg in change.get('value', {}).get('messages', []):
+                    remetente = msg.get('from', '')
+                    texto     = msg.get('text', {}).get('body', '')
+                    tipo      = msg.get('type', 'text')
+                    imagem_id = None
+                    doc_id    = None
+                    nome_doc  = ''
+                    if tipo == 'image':
+                        imagem_id = msg.get('image', {}).get('id', '')
+                        caption   = msg.get('image', {}).get('caption', '')
+                        texto     = f'[IMAGEM:{imagem_id}]' + (f' {caption}' if caption else '')
+                    elif tipo == 'audio':
+                        texto = '[ÁUDIO]'
+                    elif tipo == 'video':
+                        texto = '[VÍDEO]'
+                    elif tipo == 'document':
+                        print(f"📄 DEBUG doc: {json.dumps(msg.get('document',{}))}")
+                        nome_doc = msg.get('document', {}).get('filename', 'documento')
+                        doc_id   = msg.get('document', {}).get('id', '')
+                        print(f"📄 doc_id: [{doc_id}]")
+                        texto = f'[DOCUMENTO: {nome_doc}]'
+                    elif tipo == 'sticker':
+                        texto = '[FIGURINHA]'
+                    if texto:
+                        print(f"📩 {remetente}: {texto}")
+                        remetente = normalizar_numero(remetente)
+                        msgs = carregar_mensagens()
+                        conv = msgs['conversas']
+                        if remetente not in conv:
+                            nome = remetente
+                            d = carregar_dados()
+                            for c in d.get('clientes', []):
+                                t = ''.join(filter(str.isdigit, c.get('tel1','')))
+                                if not t.startswith('55'): t = '55'+t
+                                if t == remetente: nome = c.get('nome', remetente); break
+                            conv[remetente] = {'numero': remetente, 'nome': nome, 'msgs': []}
+                        entrada = {'dir':'recv','texto':texto,'ts':int(time.time()*1000),'lida':False,'tipo':tipo}
+                        if imagem_id: entrada['imagem_id'] = imagem_id
+                        if tipo == 'document' and doc_id: entrada['doc_id'] = doc_id; entrada['doc_nome'] = nome_doc
+                        conv[remetente]['msgs'].append(entrada)
+                        salvar_conversa(remetente, conv[remetente])
+    except Exception as e:
+        print(f"Erro webhook: {e}")
+    return jsonify({"ok": True})
 
-        if parsed.path.startswith('/api/imagem/'):
-            imagem_id = parsed.path.split('/api/imagem/')[-1]
-            try:
-                import urllib.request as ur
-                req1 = ur.Request(f"https://graph.facebook.com/v20.0/{imagem_id}",
-                    headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
-                with ur.urlopen(req1) as r1:
-                    info = json.loads(r1.read())
-                img_url = info.get('url','')
-                req2 = ur.Request(img_url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
-                with ur.urlopen(req2) as r2:
-                    img_data = r2.read()
-                    content_type = r2.headers.get('Content-Type','image/jpeg')
-                self.send_response(200); self.send_header('Content-type', content_type); self.end_headers()
-                self.wfile.write(img_data)
-            except Exception as e:
-                print(f"Erro buscar imagem: {e}")
-                self.send_response(404); self.end_headers()
-            return
+@app.route('/api/clientes', methods=['GET'])
+def api_clientes():
+    d = carregar_dados()
+    return Response(json.dumps(d, ensure_ascii=False), mimetype='application/json')
 
-        if parsed.path.startswith('/api/documento/'):
-            doc_id = parsed.path.split('/api/documento/')[-1]
-            try:
-                import urllib.request as ur
-                req1 = ur.Request(f'https://graph.facebook.com/v20.0/{doc_id}',
-                    headers={'Authorization': f'Bearer {WHATSAPP_TOKEN}'})
-                with ur.urlopen(req1) as r1:
-                    info = json.loads(r1.read())
-                doc_url = info.get('url','')
-                req2 = ur.Request(doc_url, headers={'Authorization': f'Bearer {WHATSAPP_TOKEN}'})
-                with ur.urlopen(req2) as r2:
-                    doc_data = r2.read()
-                    content_type = r2.headers.get('Content-Type','application/pdf')
-                self.send_response(200)
-                self.send_header('Content-type', content_type)
-                self.send_header('Content-Disposition', 'attachment')
-                self.end_headers()
-                self.wfile.write(doc_data)
-            except Exception as e:
-                print(f'Erro buscar documento: {e}')
-                self.send_response(404); self.end_headers()
-            return
+@app.route('/api/mensagens', methods=['GET'])
+def api_mensagens():
+    m = carregar_mensagens()
+    return Response(json.dumps(m.get('conversas', {}), ensure_ascii=False), mimetype='application/json')
 
-        if parsed.path in ('/', '/index.html'):
-            self.send_response(200); self.send_header('Content-type','text/html; charset=utf-8'); self.end_headers()
-            self.wfile.write(HTML.encode('utf-8'))
+@app.route('/api/disparos/historico', methods=['GET'])
+def api_disparos_historico():
+    hist = carregar_historico_disparos()
+    return Response(json.dumps(hist, ensure_ascii=False), mimetype='application/json')
+
+@app.route('/api/imagem/<imagem_id>', methods=['GET'])
+def api_imagem(imagem_id):
+    try:
+        req1 = urllib.request.Request(f"https://graph.facebook.com/v20.0/{imagem_id}",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+        with urllib.request.urlopen(req1) as r1:
+            info = json.loads(r1.read())
+        img_url = info.get('url', '')
+        req2 = urllib.request.Request(img_url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+        with urllib.request.urlopen(req2) as r2:
+            img_data = r2.read()
+            content_type = r2.headers.get('Content-Type', 'image/jpeg')
+        return Response(img_data, mimetype=content_type)
+    except Exception as e:
+        print(f"Erro buscar imagem: {e}")
+        return Response('Not found', status=404)
+
+@app.route('/api/documento/<doc_id>', methods=['GET'])
+def api_documento(doc_id):
+    try:
+        req1 = urllib.request.Request(f'https://graph.facebook.com/v20.0/{doc_id}',
+            headers={'Authorization': f'Bearer {WHATSAPP_TOKEN}'})
+        with urllib.request.urlopen(req1) as r1:
+            info = json.loads(r1.read())
+        doc_url = info.get('url', '')
+        req2 = urllib.request.Request(doc_url, headers={'Authorization': f'Bearer {WHATSAPP_TOKEN}'})
+        with urllib.request.urlopen(req2) as r2:
+            doc_data = r2.read()
+            content_type = r2.headers.get('Content-Type', 'application/pdf')
+        return Response(doc_data, mimetype=content_type,
+            headers={'Content-Disposition': 'attachment'})
+    except Exception as e:
+        print(f'Erro buscar documento: {e}')
+        return Response('Not found', status=404)
+
+@app.route('/api/salvar', methods=['POST'])
+def api_salvar():
+    body = request.get_json(force=True)
+    for c in body.get('clientes', []):
+        salvar_cliente(c)
+    return jsonify({"ok": True})
+
+@app.route('/api/excluir', methods=['POST'])
+def api_excluir():
+    body = request.get_json(force=True)
+    excluir_cliente_db(body.get('id', ''))
+    return jsonify({"ok": True})
+
+@app.route('/api/importar', methods=['POST'])
+def api_importar():
+    body = request.get_json(force=True)
+    novos = body.get('clientes', [])
+    for c in novos:
+        salvar_cliente(c)
+    return jsonify({"ok": True, "importados": len(novos)})
+
+@app.route('/api/disparos/salvar', methods=['POST'])
+def api_disparos_salvar():
+    body = request.get_json(force=True)
+    salvar_disparo(body.get('template',''), body.get('total',0), body.get('enviados',0), body.get('erros',0), body.get('log',[]))
+    return jsonify({"ok": True})
+
+@app.route('/api/disparo/enviar', methods=['POST'])
+def api_disparo_enviar():
+    body = request.get_json(force=True)
+    resultado = enviar_template(body.get('telefone',''), body.get('template',''), body.get('nome',''))
+    return Response(json.dumps(resultado, ensure_ascii=False), mimetype='application/json')
+
+@app.route('/api/disparo/cancelar', methods=['POST'])
+def api_disparo_cancelar():
+    disparo_status['cancelar'] = True
+    return jsonify({"ok": True})
+
+@app.route('/api/disparo/status', methods=['GET'])
+def api_disparo_status():
+    return Response(json.dumps(disparo_status), mimetype='application/json')
+
+@app.route('/api/disparo/resetar', methods=['POST'])
+def api_disparo_resetar():
+    disparo_status.update({"ativo":False,"cancelar":False,"total":0,"enviados":0,"erros":0,"log":[]})
+    return jsonify({"ok": True})
+
+@app.route('/api/whatsapp', methods=['POST'])
+def api_whatsapp():
+    body    = request.get_json(force=True)
+    telefone = body.get('telefone', '')
+    mensagem = body.get('mensagem', '')
+    salvar   = body.get('salvar', False)
+    resultado = enviar_whatsapp(telefone, mensagem)
+    if salvar and (resultado.get('messages') or resultado.get('ok')):
+        numero = ''.join(filter(str.isdigit, telefone))
+        if not numero.startswith('55'): numero = '55' + numero
+        msgs = carregar_mensagens()
+        conv = msgs['conversas']
+        if numero not in conv: conv[numero] = {'numero':numero,'nome':numero,'msgs':[]}
+        conv[numero]['msgs'].append({'dir':'sent','texto':mensagem,'ts':int(time.time()*1000),'lida':True})
+        salvar_conversa(numero, conv[numero])
+    return Response(json.dumps(resultado, ensure_ascii=False), mimetype='application/json')
+
+@app.route('/api/mensagens/lidas', methods=['POST'])
+def api_mensagens_lidas():
+    body   = request.get_json(force=True)
+    numero = body.get('numero', '')
+    msgs   = carregar_mensagens()
+    if numero in msgs.get('conversas', {}):
+        for m in msgs['conversas'][numero].get('msgs', []): m['lida'] = True
+        salvar_conversa(numero, msgs['conversas'][numero])
+    return jsonify({"ok": True})
+
+@app.route('/api/preview', methods=['POST'])
+@app.route('/api/preview_aba', methods=['POST'])
+def api_preview():
+    import io
+    aba       = request.form.get('aba', '')
+    file_data = None
+    if 'file' in request.files:
+        file_data = request.files['file'].read()
+
+    if request.path == '/api/preview_aba' and aba and file_data:
+        try:
+            xl = pd.ExcelFile(io.BytesIO(file_data))
+            df = xl.parse(aba).fillna('')
+            resp = json.dumps({'colunas':list(df.columns),'dados':df.to_dict(orient='records')}, ensure_ascii=False, default=str)
+        except Exception as e:
+            resp = json.dumps({'erro': str(e)})
+        return Response(resp, mimetype='application/json')
+
+    try:
+        filename = request.files['file'].filename if 'file' in request.files else ''
+        if filename.lower().endswith('.csv'):
+            try: df = pd.read_csv(io.BytesIO(file_data), encoding='utf-8', on_bad_lines='skip')
+            except: df = pd.read_csv(io.BytesIO(file_data), encoding='latin-1', on_bad_lines='skip')
+            df = df.fillna('')
+            resp = json.dumps({'colunas':list(df.columns),'dados':df.to_dict(orient='records'),'abas':[],'aba_atual':''}, ensure_ascii=False, default=str)
         else:
-            self.send_response(404); self.end_headers()
+            xl = pd.ExcelFile(io.BytesIO(file_data))
+            abas = xl.sheet_names; aba_atual = abas[0]
+            df = xl.parse(aba_atual).fillna('')
+            resp = json.dumps({'colunas':list(df.columns),'dados':df.to_dict(orient='records'),'abas':abas,'aba_atual':aba_atual}, ensure_ascii=False, default=str)
+    except Exception as e:
+        resp = json.dumps({'erro': str(e)})
+    return Response(resp, mimetype='application/json')
 
-    def do_POST(self):
-        if self.path == '/webhook':
-            length = int(self.headers.get('Content-Length', 0))
-            body   = json.loads(self.rfile.read(length))
-            try:
-                for entry in body.get('entry', []):
-                    for change in entry.get('changes', []):
-                        for msg in change.get('value', {}).get('messages', []):
-                            remetente = msg.get('from', '')
-                            texto     = msg.get('text', {}).get('body', '')
-                            tipo      = msg.get('type', 'text')
-                            # Suporte a imagens e documentos
-                            imagem_id = None
-                            doc_id    = None
-                            nome_doc  = ''
-                            if tipo == 'image':
-                                imagem_id = msg.get('image', {}).get('id', '')
-                                caption   = msg.get('image', {}).get('caption', '')
-                                texto     = f'[IMAGEM:{imagem_id}]' + (f' {caption}' if caption else '')
-                            elif tipo == 'audio':
-                                texto = '[ÁUDIO]'
-                            elif tipo == 'video':
-                                texto = '[VÍDEO]'
-                            elif tipo == 'document':
-                                print(f"📄 DEBUG doc: {json.dumps(msg.get('document',{}))}")
-                                nome_doc = msg.get('document', {}).get('filename', 'documento')
-                                doc_id   = msg.get('document', {}).get('id', '')
-                                print(f"📄 doc_id: [{doc_id}]")
-                                texto = f'[DOCUMENTO: {nome_doc}]'
-                            elif tipo == 'sticker':
-                                texto = '[FIGURINHA]'
-                            if texto:
-                                print(f"📩 {remetente}: {texto}")
-                                remetente = normalizar_numero(remetente)
-                                msgs = carregar_mensagens()
-                                conv = msgs['conversas']
-                                if remetente not in conv:
-                                    nome = remetente
-                                    d = carregar_dados()
-                                    for c in d.get('clientes', []):
-                                        t = ''.join(filter(str.isdigit, c.get('tel1','')))
-                                        if not t.startswith('55'): t = '55'+t
-                                        if t == remetente: nome = c.get('nome', remetente); break
-                                    conv[remetente] = {'numero': remetente, 'nome': nome, 'msgs': []}
-                                entrada = {'dir':'recv','texto':texto,'ts':int(time.time()*1000),'lida':False,'tipo':tipo}
-                                if imagem_id: entrada['imagem_id'] = imagem_id
-                                if tipo == 'document' and doc_id: entrada['doc_id'] = doc_id; entrada['doc_nome'] = nome_doc
-                                conv[remetente]['msgs'].append(entrada)
-                                salvar_conversa(remetente, conv[remetente])
-            except Exception as e:
-                print(f"Erro webhook: {e}")
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        if self.path == '/api/salvar':
-            length = int(self.headers['Content-Length'])
-            body   = json.loads(self.rfile.read(length))
-            clientes = body.get('clientes', [])
-            # Salva cada cliente individualmente
-            for c in clientes:
-                salvar_cliente(c)
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        if self.path == '/api/excluir':
-            length = int(self.headers['Content-Length'])
-            body   = json.loads(self.rfile.read(length))
-            excluir_cliente_db(body.get('id',''))
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        if self.path == '/api/importar':
-            length = int(self.headers['Content-Length'])
-            body   = json.loads(self.rfile.read(length))
-            novos  = body.get('clientes', [])
-            for c in novos:
-                salvar_cliente(c)
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps({"ok": True, "importados": len(novos)}).encode())
-            return
-
-        if self.path == '/api/disparos/salvar':
-            length = int(self.headers['Content-Length'])
-            body   = json.loads(self.rfile.read(length))
-            salvar_disparo(body.get('template',''), body.get('total',0), body.get('enviados',0), body.get('erros',0), body.get('log',[]))
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        if self.path == '/api/disparo/enviar':
-            length = int(self.headers['Content-Length'])
-            body   = json.loads(self.rfile.read(length))
-            resultado = enviar_template(body.get('telefone',''), body.get('template',''), body.get('nome',''))
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps(resultado, ensure_ascii=False).encode('utf-8'))
-            return
-
-        if self.path == '/api/disparo/cancelar':
-            disparo_status['cancelar'] = True
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        if self.path == '/api/disparo/status':
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps(disparo_status).encode('utf-8'))
-            return
-
-        if self.path == '/api/disparo/resetar':
-            disparo_status.update({"ativo":False,"cancelar":False,"total":0,"enviados":0,"erros":0,"log":[]})
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        if self.path == '/api/whatsapp':
-            length = int(self.headers['Content-Length'])
-            body   = json.loads(self.rfile.read(length))
-            telefone = body.get('telefone',''); mensagem = body.get('mensagem',''); salvar = body.get('salvar',False)
-            resultado = enviar_whatsapp(telefone, mensagem)
-            if salvar and (resultado.get('messages') or resultado.get('ok')):
-                numero = ''.join(filter(str.isdigit, telefone))
-                if not numero.startswith('55'): numero = '55'+numero
-                msgs = carregar_mensagens()
-                conv = msgs['conversas']
-                if numero not in conv: conv[numero] = {'numero':numero,'nome':numero,'msgs':[]}
-                conv[numero]['msgs'].append({'dir':'sent','texto':mensagem,'ts':int(time.time()*1000),'lida':True})
-                salvar_conversa(numero, conv[numero])
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(json.dumps(resultado, ensure_ascii=False).encode('utf-8'))
-            return
-
-        if self.path == '/api/mensagens/lidas':
-            length = int(self.headers['Content-Length'])
-            body   = json.loads(self.rfile.read(length))
-            numero = body.get('numero','')
-            msgs = carregar_mensagens()
-            if numero in msgs.get('conversas',{}):
-                for m in msgs['conversas'][numero].get('msgs',[]): m['lida'] = True
-                salvar_conversa(numero, msgs['conversas'][numero])
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-
-        if self.path in ('/api/preview', '/api/preview_aba'):
-            import io
-            content_type = self.headers['Content-Type']
-            boundary = content_type.split('boundary=')[-1].encode()
-            length   = int(self.headers['Content-Length'])
-            body     = self.rfile.read(length)
-            parts    = body.split(b'--' + boundary)
-            file_data = None; aba = ''
-            for part in parts:
-                if b'filename=' in part:
-                    idx = part.index(b'\r\n\r\n')
-                    file_data = part[idx+4:].rstrip(b'\r\n--')
-                elif b'name="aba"' in part:
-                    idx = part.index(b'\r\n\r\n')
-                    aba = part[idx+4:].rstrip(b'\r\n--').decode('utf-8')
-            if self.path == '/api/preview_aba' and aba and file_data:
-                try:
-                    xl = pd.ExcelFile(io.BytesIO(file_data))
-                    df = xl.parse(aba).fillna('')
-                    resp = json.dumps({'colunas':list(df.columns),'dados':df.to_dict(orient='records')}, ensure_ascii=False, default=str)
-                except Exception as e:
-                    resp = json.dumps({'erro':str(e)})
-                self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-                self.wfile.write(resp.encode('utf-8')); return
-            try:
-                filename = request.files['file'].filename if 'file' in request.files else ''
-                if filename.lower().endswith('.csv'):
-                    try: df = pd.read_csv(io.BytesIO(file_data), encoding='utf-8', on_bad_lines='skip')
-                    except: df = pd.read_csv(io.BytesIO(file_data), encoding='latin-1', on_bad_lines='skip')
-                    df = df.fillna('')
-                    resp = json.dumps({'colunas':list(df.columns),'dados':df.to_dict(orient='records'),'abas':[],'aba_atual':''}, ensure_ascii=False, default=str)
-                else:
-                    xl = pd.ExcelFile(io.BytesIO(file_data))
-                    abas = xl.sheet_names; aba_atual = abas[0]
-                    df = xl.parse(aba_atual).fillna('')
-                    resp = json.dumps({'colunas':list(df.columns),'dados':df.to_dict(orient='records'),'abas':abas,'aba_atual':aba_atual}, ensure_ascii=False, default=str)
-            except Exception as e:
-                resp = json.dumps({'erro':str(e)})
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            self.wfile.write(resp.encode('utf-8'))
-            return
-
-        self.send_response(404); self.end_headers()
 
 if __name__ == '__main__':
     print(f"🚀 CRM Consignado iniciando na porta {PORT}")
-    server = HTTPServer(('0.0.0.0', PORT), Handler)
-    server.serve_forever()
+    app.run(host='0.0.0.0', port=PORT)
