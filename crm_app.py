@@ -243,12 +243,10 @@ PALAVRAS_CHAVE = [
     "concede reajuste servidor",
     "revisão geral anual",
     "reajuste salarial servidor público",
-    "aumento salarial servidor",
-    "reajuste",
-    "aumento salarial",
+    "aumento salarial servidor público",
     "altera tabela de vencimentos",
-    "reestrutura plano de cargos salários",
-    "reajuste vencimento cargo",
+    "reestrutura plano de cargos",
+    "reajuste vencimento servidor",
 ]
 
 # Headers que simulam navegador real para evitar bloqueio 403
