@@ -240,11 +240,15 @@ def marcar_reajuste_visto(id_reajuste):
 
 # ── MONITOR DE REAJUSTES (background thread) ──────────────────────────────────
 PALAVRAS_CHAVE = [
-    "reajuste salarial servidor",
-    "revisão geral anual servidor",
-    "reestruturação plano de cargos",
-    "reajuste vencimento servidor municipal",
-    "lei de vencimentos servidor municipal",
+    "concede reajuste servidor",
+    "revisão geral anual",
+    "reajuste salarial servidor público",
+    "aumento salarial servidor",
+    "reajuste",
+    "aumento salarial",
+    "altera tabela de vencimentos",
+    "reestrutura plano de cargos salários",
+    "reajuste vencimento cargo",
 ]
 
 # Headers que simulam navegador real para evitar bloqueio 403
