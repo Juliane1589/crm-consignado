@@ -247,29 +247,105 @@ PALAVRAS_CHAVE = [
     "lei de vencimentos servidor municipal",
 ]
 
+# Headers que simulam navegador real para evitar bloqueio 403
+HEADERS_NAVEGADOR = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/html, */*; q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
+}
+
 def buscar_querido_diario(termo, dias_atras=8):
     if not REQUESTS_OK:
         return None
     data_inicio = (date.today() - timedelta(days=dias_atras)).strftime('%Y-%m-%d')
-    url = "https://queridodiario.ok.org.br/api/gazettes"
+    # Tenta o endpoint correto com headers de navegador
+    for base_url in [
+        "https://api.queridodiario.ok.org.br/gazettes",
+        "https://queridodiario.ok.org.br/api/gazettes",
+    ]:
+        params = {
+            "querystring": termo,
+            "published_since": data_inicio,
+            "size": 20,
+            "sort_by": "descending_date",
+            "is_municipality": "true",
+        }
+        try:
+            import requests as rlib
+            sess = rlib.Session()
+            sess.headers.update(HEADERS_NAVEGADOR)
+            # Faz uma requisição inicial para pegar cookies
+            sess.get("https://queridodiario.ok.org.br/", timeout=10)
+            resp = sess.get(base_url, params=params, timeout=30)
+            if resp.status_code == 200:
+                return resp.json()
+            print(f"[RADAR] {base_url} retornou {resp.status_code} para '{termo}'")
+        except Exception as e:
+            print(f"[RADAR] Erro '{base_url}': {e}")
+        time.sleep(2)
+    return None
+
+def buscar_in_gov(termo, dias_atras=8):
+    """Busca no Portal da Imprensa Nacional (DOU) como fonte alternativa."""
+    if not REQUESTS_OK:
+        return []
+    import requests as rlib
+    import urllib.parse
+    from datetime import date, timedelta
+    import re
+
+    data_inicio = (date.today() - timedelta(days=dias_atras)).strftime('%d/%m/%Y')
+    data_fim    = date.today().strftime('%d/%m/%Y')
+
+    url = "https://www.in.gov.br/consulta/-/buscar-resultados"
     params = {
-        "querystring": termo,
-        "published_since": data_inicio,
-        "size": 20,
-        "sort_by": "descending_date",
-        "is_municipality": "true",
+        'q': termo,
+        'exactDate': 'personalizado',
+        'publicacaoInicio': data_inicio,
+        'publicacaoFim': data_fim,
+        'sortType': '0',
+        'delta': '20',
+        'pageNumber': '1',
     }
-    headers = {"User-Agent": "CRM-Consignado/1.0", "Accept": "application/json"}
     try:
-        import requests as rlib
-        resp = rlib.get(url, params=params, headers=headers, timeout=30)
-        if resp.status_code == 200:
-            return resp.json()
-        print(f"[RADAR] Querido Diário retornou {resp.status_code} para '{termo}'")
-        return None
+        sess = rlib.Session()
+        sess.headers.update(HEADERS_NAVEGADOR)
+        resp = sess.get(url, params=params, timeout=30)
+        if resp.status_code != 200:
+            print(f"[RADAR] IN.gov retornou {resp.status_code} para '{termo}'")
+            return []
+
+        # Extrai resultados do HTML
+        html = resp.text
+        resultados = []
+
+        # Padrão para encontrar títulos e links no HTML do DOU
+        links = re.findall(r'href="(https://www\.in\.gov\.br/web/dou/-/[^"]+)"[^>]*>([^<]+)<', html)
+        for link, titulo in links[:10]:
+            # Tenta extrair município do título
+            municipio = 'Município não identificado'
+            estado = '??'
+            # Busca padrão "município de NOME" ou "prefeitura de NOME"
+            m = re.search(r'(?:município|prefeitura|câmara)\s+(?:de|do|da|dos|das)\s+([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç\s]+?)(?:\s*[-/,]|\s+estado|\s+–|$)', titulo, re.IGNORECASE)
+            if m:
+                municipio = m.group(1).strip()
+
+            resultados.append({
+                'municipio': municipio,
+                'estado': estado,
+                'data_pub': date.today(),
+                'titulo': titulo.strip(),
+                'trecho': titulo.strip(),
+                'url': link,
+                'fonte': 'DOU',
+            })
+        return resultados
     except Exception as e:
-        print(f"[RADAR] Erro busca '{termo}': {e}")
-        return None
+        print(f"[RADAR] Erro IN.gov '{termo}': {e}")
+        return []
 
 def processar_gazette(gazette):
     municipio = gazette.get('territory_name', 'Desconhecido')
@@ -287,43 +363,62 @@ def processar_gazette(gazette):
     if len(trecho) > 800:
         trecho = trecho[:800] + '...'
     return {'municipio': municipio, 'estado': estado, 'data_pub': data_pub,
-            'titulo': titulo, 'trecho': trecho, 'url': url}
+            'titulo': titulo, 'trecho': trecho, 'url': url, 'fonte': 'Querido Diário'}
 
 def executar_busca_radar(dias_atras=8):
     print(f"[RADAR] 🔍 Iniciando busca ({date.today()})...")
     novos = 0
     urls_vistas = set()
+    qd_funcionou = False
+
     for termo in PALAVRAS_CHAVE:
+        # Tenta Querido Diário primeiro
         resultado = buscar_querido_diario(termo, dias_atras=dias_atras)
-        if not resultado:
-            time.sleep(3)
-            continue
-        gazettes = resultado.get('gazettes', [])
-        print(f"[RADAR] '{termo}' → {len(gazettes)} publicações")
-        for gazette in gazettes:
-            url = gazette.get('url', '')
-            if url in urls_vistas:
-                continue
-            urls_vistas.add(url)
-            dados = processar_gazette(gazette)
-            inserido = salvar_reajuste(
-                data_pub=dados['data_pub'], municipio=dados['municipio'],
-                estado=dados['estado'],    titulo=dados['titulo'],
-                trecho=dados['trecho'],    url=dados['url'],
-            )
-            if inserido:
-                novos += 1
-                print(f"[RADAR] ✅ NOVO: {dados['municipio']}/{dados['estado']}")
+        if resultado:
+            qd_funcionou = True
+            gazettes = resultado.get('gazettes', [])
+            print(f"[RADAR] QD '{termo}' → {len(gazettes)} publicações")
+            for gazette in gazettes:
+                url = gazette.get('url', '')
+                if url in urls_vistas:
+                    continue
+                urls_vistas.add(url)
+                dados = processar_gazette(gazette)
+                inserido = salvar_reajuste(
+                    data_pub=dados['data_pub'], municipio=dados['municipio'],
+                    estado=dados['estado'],    titulo=dados['titulo'],
+                    trecho=dados['trecho'],    url=dados['url'],
+                )
+                if inserido:
+                    novos += 1
+                    print(f"[RADAR] ✅ NOVO (QD): {dados['municipio']}/{dados['estado']}")
+        else:
+            # Fallback: Imprensa Nacional (DOU)
+            print(f"[RADAR] QD falhou, tentando DOU para '{termo}'...")
+            resultados_dou = buscar_in_gov(termo, dias_atras=dias_atras)
+            print(f"[RADAR] DOU '{termo}' → {len(resultados_dou)} publicações")
+            for dados in resultados_dou:
+                url = dados['url']
+                if url in urls_vistas:
+                    continue
+                urls_vistas.add(url)
+                inserido = salvar_reajuste(
+                    data_pub=dados['data_pub'], municipio=dados['municipio'],
+                    estado=dados['estado'],    titulo=dados['titulo'],
+                    trecho=dados['trecho'],    url=dados['url'],
+                )
+                if inserido:
+                    novos += 1
+                    print(f"[RADAR] ✅ NOVO (DOU): {dados['municipio']}")
         time.sleep(3)
-    print(f"[RADAR] ✅ Busca concluída: {novos} reajustes novos")
+
+    print(f"[RADAR] ✅ Busca concluída: {novos} reajustes novos | QD ok={qd_funcionou}")
     return novos
 
 def loop_monitor():
     """Roda em background thread — busca todo dia às 7h."""
     time.sleep(15)  # espera o app subir
     print("[RADAR] 🚀 Monitor de reajustes iniciado")
-
-    # Busca inicial: últimos 30 dias para popular o banco
     print("[RADAR] 📅 Busca inicial (últimos 30 dias)...")
     executar_busca_radar(dias_atras=30)
 
@@ -1584,4 +1679,4 @@ def api_preview():
 
 if __name__ == '__main__':
     print(f"🚀 CRM Consignado iniciando na porta {PORT}")
-    app.run(host='0.0.0.0', port=PORT) 
+    app.run(host='0.0.0.0', port=PORT)
