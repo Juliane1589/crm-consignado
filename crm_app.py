@@ -367,6 +367,23 @@ def processar_gazette(gazette):
     return {'municipio': municipio, 'estado': estado, 'data_pub': data_pub,
             'titulo': titulo, 'trecho': trecho, 'url': url, 'fonte': 'Querido Diário'}
 
+TERMOS_RELEVANTES = [
+    'reajuste', 'revisão geral', 'aumento salarial', 'vencimento',
+    'subsídio', 'tabela salarial', 'plano de cargos', 'piso salarial',
+    'remuneração', 'salário', 'gratificação', 'progressão',
+]
+TERMOS_IRRELEVANTES = [
+    'exonera', 'nomeia', 'dispensa', 'contrato', 'licitação',
+    'licitacao', 'pregão', 'concorrência', 'tomada de preço',
+    'convênio de repasse', 'obras', 'pavimentação',
+]
+
+def trecho_relevante(trecho):
+    t = trecho.lower()
+    tem_relevante = any(p in t for p in TERMOS_RELEVANTES)
+    so_irrelevante = all(p in t for p in TERMOS_IRRELEVANTES[:3]) and not tem_relevante
+    return tem_relevante and not so_irrelevante
+
 def executar_busca_radar(dias_atras=8):
     print(f"[RADAR] 🔍 Iniciando busca ({date.today()})...")
     novos = 0
@@ -386,6 +403,9 @@ def executar_busca_radar(dias_atras=8):
                     continue
                 urls_vistas.add(url)
                 dados = processar_gazette(gazette)
+                if not trecho_relevante(dados['trecho']):
+                    print(f"[RADAR] ⏭ Ignorado (irrelevante): {dados['municipio']}/{dados['estado']}")
+                    continue
                 inserido = salvar_reajuste(
                     data_pub=dados['data_pub'], municipio=dados['municipio'],
                     estado=dados['estado'],    titulo=dados['titulo'],
@@ -404,6 +424,9 @@ def executar_busca_radar(dias_atras=8):
                 if url in urls_vistas:
                     continue
                 urls_vistas.add(url)
+                if not trecho_relevante(dados['trecho']):
+                    print(f"[RADAR] ⏭ Ignorado DOU (irrelevante): {dados['municipio']}")
+                    continue
                 inserido = salvar_reajuste(
                     data_pub=dados['data_pub'], municipio=dados['municipio'],
                     estado=dados['estado'],    titulo=dados['titulo'],
