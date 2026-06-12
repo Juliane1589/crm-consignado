@@ -1520,6 +1520,7 @@ def webhook_receive():
                         doc_id   = msg.get('document', {}).get('id', '')
                         texto    = f'[DOCUMENTO: {nome_doc}]'
                     elif tipo == 'sticker': texto = '[FIGURINHA]'
+                    elif tipo == 'button': texto = msg.get('button', {}).get('text', '[BOTÃO]')
                     elif tipo == 'interactive':
                         inter = msg.get('interactive', {})
                         itype = inter.get('type', '')
