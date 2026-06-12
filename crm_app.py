@@ -1519,6 +1519,15 @@ def webhook_receive():
                         doc_id   = msg.get('document', {}).get('id', '')
                         texto    = f'[DOCUMENTO: {nome_doc}]'
                     elif tipo == 'sticker': texto = '[FIGURINHA]'
+                    elif tipo == 'interactive':
+                        inter = msg.get('interactive', {})
+                        itype = inter.get('type', '')
+                        if itype == 'button_reply':
+                            texto = inter.get('button_reply', {}).get('title', '[BOTÃO]')
+                        elif itype == 'list_reply':
+                            texto = inter.get('list_reply', {}).get('title', '[LISTA]')
+                        else:
+                            texto = '[INTERATIVO]'
                     if texto:
                         remetente = normalizar_numero(remetente)
                         msgs = carregar_mensagens(); conv = msgs['conversas']
