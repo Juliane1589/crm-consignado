@@ -1500,6 +1500,7 @@ def webhook_verify():
 @app.route('/webhook', methods=['POST'])
 def webhook_receive():
     body = request.get_json(force=True, silent=True) or {}
+    print(f"WEBHOOK RECEBIDO: {json.dumps(body)}")
     try:
         for entry in body.get('entry', []):
             for change in entry.get('changes', []):
