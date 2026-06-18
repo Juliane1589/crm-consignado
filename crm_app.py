@@ -1344,7 +1344,7 @@ function tsRelativo(ts) {
   return new Date(ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
 }
 
-function escHtml(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');}
+function escHtml(t){if(!t)return '';return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 function abrirChatTel(tel,nome){
   let num=tel.replace(/\D/g,'');if(num.startsWith('0'))num=num.slice(1);if(!num.startsWith('55'))num='55'+num;if(num.length===12)num=num.slice(0,4)+'9'+num.slice(4);
@@ -1384,7 +1384,10 @@ function renderChat(){
   el.innerHTML=conv.msgs.map(m=>{
     const d=new Date(m.ts),dataStr=d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}),hora=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     let sep='';if(dataStr!==ultimaData){ultimaData=dataStr;sep=`<div style="text-align:center;margin:8px 0"><span style="background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">${dataStr}</span></div>`;}
-    return `${sep}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">${m.imagem_id?`<img src="/api/imagem/${m.imagem_id}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:4px" loading="lazy">`:''} ${m.doc_id?`<a href="/api/documento/${m.doc_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--blue-text);text-decoration:none;font-size:12px">📄 ${m.doc_nome||'Documento'}</a>`:''} ${m.texto&&!m.texto.startsWith('[IMAGEM:')&&!m.texto.startsWith('[DOCUMENTO:')?escHtml(m.texto):''}<div class="msg-time">${hora}</div></div>`;
+    const textoExibir = m.texto && !m.texto.startsWith('[IMAGEM:') && !m.texto.startsWith('[DOCUMENTO:') ? escHtml(m.texto) : '';
+    const imgHtml = m.imagem_id ? `<img src="/api/imagem/${m.imagem_id}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:4px" loading="lazy">` : '';
+    const docHtml = m.doc_id ? `<a href="/api/documento/${m.doc_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--blue-text);text-decoration:none;font-size:12px">📄 ${m.doc_nome||'Documento'}</a>` : '';
+    return `${sep}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">${imgHtml}${docHtml}${textoExibir?`<span style="white-space:pre-wrap">${textoExibir}</span>`:''}<div class="msg-time">${hora}</div></div>`;
   }).join('');
   el.scrollTop=el.scrollHeight;
 }
