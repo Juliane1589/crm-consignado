@@ -26,6 +26,14 @@ except ImportError:
 app = Flask(__name__)
 log = logging.getLogger(__name__)
 
+@app.after_request
+def add_cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
+
 PORT = int(os.environ.get('PORT', 8765))
 
 # ── WhatsApp ──────────────────────────────────────────────────────────────────
