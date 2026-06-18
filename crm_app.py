@@ -1637,6 +1637,47 @@ def api_importar():
     for c in novos: salvar_cliente(c)
     return jsonify({"ok": True, "importados": len(novos)})
 
+@app.route('/api/lead_site', methods=['POST', 'OPTIONS'])
+def api_lead_site():
+    if request.method == 'OPTIONS':
+        resp = Response('', status=200)
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        return resp
+    try:
+        body = request.get_json(force=True)
+        nome  = body.get('nome', '').strip()
+        tel   = body.get('tel', '').strip()
+        cpf   = body.get('cpf', '').strip()
+        orgao = body.get('orgao', '').strip()
+        tipo  = body.get('tipo', '').strip()
+        if not nome or not tel:
+            return jsonify({"ok": False, "erro": "Nome e telefone obrigatorios"}), 400
+        import uuid
+        novo_cliente = {
+            "id": str(uuid.uuid4()),
+            "nome": nome,
+            "tel1": tel,
+            "cpf": cpf,
+            "orgao": orgao,
+            "tipo": tipo,
+            "status": "Lead Site",
+            "origem": "Site CrediRota",
+            "data_cadastro": datetime.now().strftime('%d/%m/%Y %H:%M'),
+            "obs": f"Lead captado pelo site credirota.com em {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        }
+        salvar_cliente(novo_cliente)
+        print(f"Lead site cadastrado: {nome} ({tel})")
+        resp = jsonify({"ok": True, "id": novo_cliente["id"]})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
+    except Exception as e:
+        print(f"Erro lead_site: {e}")
+        resp = jsonify({"ok": False, "erro": str(e)})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 500
+
 @app.route('/api/disparos/salvar', methods=['POST'])
 def api_disparos_salvar():
     body = request.get_json(force=True)
