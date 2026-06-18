@@ -692,7 +692,36 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
 .tag{font-family:'DM Mono',monospace;font-size:10px;background:var(--surface2);border:1px solid var(--border);padding:2px 7px;border-radius:4px;color:var(--muted)}
 .green-dot{display:inline-block;width:7px;height:7px;background:var(--green);border-radius:50%;margin-right:4px}
 
-/* ── RADAR ── */
+/* ── MOBILE RESPONSIVO ── */
+@media (max-width: 768px) {
+  .sidebar{width:100%;height:auto;position:relative;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--border)}
+  .logo-area{padding:12px 16px;border-bottom:none;flex:1}
+  .logo-name{font-size:14px}.logo-tag{display:none}
+  .nav{display:flex;flex-direction:row;padding:4px 8px;overflow-x:auto;flex-wrap:nowrap;gap:4px;width:100%;border-top:1px solid var(--border)}
+  .nav-section{display:none}
+  .nav-btn{padding:6px 12px;white-space:nowrap;margin-bottom:0;font-size:12px;flex-shrink:0}
+  .sidebar-footer{display:none}
+  .main{margin-left:0;height:calc(100vh - 110px)}
+  .main-inner{padding:16px}
+  .metrics{grid-template-columns:1fr 1fr;gap:8px}
+  .chat-layout{flex-direction:column;height:calc(100vh - 160px);gap:0}
+  .chat-list-col{width:100%;border-radius:0;border:none;border-bottom:1px solid var(--border);display:block}
+  .chat-list-col.mobile-hidden{display:none}
+  .chat-win{border-radius:0;border:none;display:none}
+  .chat-win.mobile-open{display:flex;position:fixed;inset:0;z-index:200;background:var(--bg);flex-direction:column}
+  .mobile-back{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface);cursor:pointer}
+  .mobile-back-btn{font-size:20px;color:var(--text)}
+  .cw-body{flex:1;overflow-y:auto;padding:12px;background:var(--bg)}
+  .cw-footer{padding:8px 12px}
+  .form-grid{grid-template-columns:1fr}
+  .cc-info{grid-template-columns:1fr 1fr}
+  .filter-bar{flex-wrap:wrap}
+  .filter-bar input{width:100%}
+  #emoji-picker{width:280px;left:0}
+}
+@media (min-width: 769px) {
+  .mobile-back{display:none}
+}
 .radar-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:10px;transition:border-color .15s}
 .radar-card:hover{border-color:var(--border2)}
 .radar-card.novo{border-left:3px solid var(--accent)}
@@ -843,6 +872,10 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
     <div class="chat-win" id="chat-win">
       <div class="chat-win-empty" id="chat-empty"><div style="font-size:32px;opacity:.2">◻</div><div style="font-size:13px">Selecione uma conversa</div></div>
       <div id="chat-open" style="display:none;flex-direction:column;height:100%">
+        <div class="mobile-back" onclick="voltarListaMobile()">
+          <span class="mobile-back-btn">←</span>
+          <span style="font-size:13px;font-weight:600">Conversas</span>
+        </div>
         <div class="cw-header">
           <div id="chat-avatar-header" style="flex-shrink:0"></div>
           <div><div class="cw-contact-name" id="chat-nome"></div><div class="cw-contact-num" id="chat-num"></div></div>
@@ -1413,6 +1446,16 @@ function abrirChatTel(tel,nome){
   showPage('mensagens',document.querySelector('[data-page="mensagens"]'));setTimeout(()=>abrirChat(num,nome),100);
 }
 
+function isMobile(){ return window.innerWidth <= 768; }
+
+function voltarListaMobile() {
+  chatAtual = null;
+  document.getElementById('chat-win').classList.remove('mobile-open');
+  document.querySelector('.chat-list-col')?.classList.remove('mobile-hidden');
+  document.getElementById('chat-empty').style.display='flex';
+  document.getElementById('chat-open').style.display='none';
+}
+
 function abrirChat(numero,nome){
   chatAtual=numero;
   const cli=clientes.find(c=>{let t=c.tel1?.replace(/\D/g,'')||'';if(t.startsWith('0'))t=t.slice(1);if(!t.startsWith('55'))t='55'+t;if(t.length===12)t=t.slice(0,4)+'9'+t.slice(4);return t===numero;});
@@ -1431,6 +1474,11 @@ function abrirChat(numero,nome){
   }else{perfil.innerHTML='';perfil.style.display='none';}
   document.getElementById('chat-empty').style.display='none';
   document.getElementById('chat-open').style.display='flex';
+  // Mobile: esconde lista e abre chat em tela cheia
+  if(isMobile()) {
+    document.getElementById('chat-win').classList.add('mobile-open');
+    document.querySelector('.chat-list-col')?.classList.add('mobile-hidden');
+  }
   if(conversas[numero]){conversas[numero].msgs?.forEach(m=>m.lida=true);fetch('/api/mensagens/lidas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({numero})});}
   renderChat();renderListaMensagens();atualizarBadgeMsg();
   document.getElementById('chat-input').focus();
