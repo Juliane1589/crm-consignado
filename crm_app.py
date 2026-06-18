@@ -659,8 +659,10 @@ input::placeholder,textarea::placeholder{color:var(--muted2)}
 .msg-bubble.sent{background:var(--accent);color:#fff;align-self:flex-end;border-radius:10px 2px 10px 10px}
 .msg-time{font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,.5);margin-top:3px;text-align:right}
 .msg-bubble.recv .msg-time{color:var(--muted)}
-.cw-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.cw-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;position:relative}
 .cw-footer input{flex:1}.cw-footer .btn{flex-shrink:0}
+.ecat{background:none;border:none;font-size:18px;cursor:pointer;padding:4px 6px;border-radius:6px;opacity:.6}
+.ecat:hover,.ecat.active{opacity:1;background:var(--surface2)}
 .drop-area{border:2px dashed var(--border);border-radius:12px;padding:36px;text-align:center;cursor:pointer;transition:border-color .2s;margin-bottom:20px}
 .drop-area:hover{border-color:var(--accent)}
 .drop-icon{font-size:36px;margin-bottom:10px}.drop-label{font-weight:600;font-size:14px;margin-bottom:4px}.drop-hint{font-size:12px;color:var(--muted)}
@@ -848,6 +850,20 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
         <div id="chat-perfil" style="display:none;overflow-y:auto;max-height:160px;flex-shrink:0"></div>
         <div class="cw-body" id="chat-msgs"></div>
         <div class="cw-footer">
+          <div style="position:relative;display:contents">
+            <button onclick="toggleEmojiPicker()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:4px 8px;border-radius:8px;color:var(--muted);transition:color .15s;flex-shrink:0" title="Emojis">😊</button>
+            <div id="emoji-picker" style="display:none;position:absolute;bottom:60px;left:8px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;width:320px;z-index:99;box-shadow:0 8px 32px rgba(0,0,0,.5)">
+              <div style="display:flex;gap:4px;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:8px;overflow-x:auto">
+                <button onclick="setCatEmoji('rostos')" class="ecat active" data-cat="rostos">😀</button>
+                <button onclick="setCatEmoji('maos')" class="ecat" data-cat="maos">👋</button>
+                <button onclick="setCatEmoji('coracao')" class="ecat" data-cat="coracao">❤️</button>
+                <button onclick="setCatEmoji('natureza')" class="ecat" data-cat="natureza">🌿</button>
+                <button onclick="setCatEmoji('objetos')" class="ecat" data-cat="objetos">💡</button>
+                <button onclick="setCatEmoji('simbolos')" class="ecat" data-cat="simbolos">✅</button>
+              </div>
+              <div id="emoji-grid" style="display:grid;grid-template-columns:repeat(8,1fr);gap:2px;max-height:200px;overflow-y:auto"></div>
+            </div>
+          </div>
           <input type="text" id="chat-input" placeholder="Digite uma mensagem..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarResposta()}">
           <button class="btn btn-primary" onclick="enviarResposta()">Enviar</button>
         </div>
@@ -1345,6 +1361,52 @@ function tsRelativo(ts) {
 }
 
 function escHtml(t){if(!t)return '';return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+const EMOJIS = {
+  rostos: ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','😮','🤯','😳','🥺','😢','😭','😤','😠','😡','🤬','😈','👿','💀','😺','😸','😹','😻','😼','😽','🙀','😿','😾'],
+  maos: ['👋','🤚','🖐','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🙏','✍️','💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🫀','🫁','🧠','🦷','🦴','👀','👁','👅','👄'],
+  coracao: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☯️','🕉','🛐','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','⛎','🔯','✡️','☸️','☦️','🔱','⚜️','🏵','✴️','🌀','💠','🔰'],
+  natureza: ['🌸','🌺','🌻','🌹','🥀','🌷','🌱','🪴','🌿','☘️','🍀','🎋','🎍','🍃','🍂','🍁','🍄','🐚','🪸','🌾','💐','🌵','🎄','🌲','🌳','🌴','🪵','🪨','🌊','🌬','🌀','🌈','🌂','⛱','⚡','❄️','☃️','⛄','🌡','🔥','💧','🌊','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵'],
+  objetos: ['💡','🔦','🕯','🪔','💰','💴','💵','💶','💷','💸','💳','🪙','💹','📈','📉','📊','📱','💻','🖥','🖨','⌨️','🖱','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⏰','⌚','⏱','⏲','📡','🔋','🔌','💾','💿','📀','🖲','🕹','🗜','💽'],
+  simbolos: ['✅','❌','❎','🔴','🟠','🟡','🟢','🔵','🟣','⚫','⚪','🟤','🔶','🔷','🔸','🔹','🔺','🔻','💠','🔘','🔲','🔳','▪️','▫️','◾','◽','◼️','◻️','⬛','⬜','🟥','🟧','🟨','🟩','🟦','🟪','⭐','🌟','✨','🎉','🎊','🎈','🎁','🏆','🥇','🥈','🥉','🏅','🎖','🎗','🏷','🔑','🗝','🔒','🔓','⚠️','🚫','🔞','📵','🚷','🚯','🚳','🚱','🔕','📴','📳'],
+};
+let emojiCatAtual = 'rostos';
+
+function toggleEmojiPicker() {
+  const p = document.getElementById('emoji-picker');
+  p.style.display = p.style.display==='none' ? 'block' : 'none';
+  if(p.style.display==='block') renderEmojis();
+}
+
+function setCatEmoji(cat) {
+  emojiCatAtual = cat;
+  document.querySelectorAll('.ecat').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.ecat[data-cat="${cat}"]`)?.classList.add('active');
+  renderEmojis();
+}
+
+function renderEmojis() {
+  const grid = document.getElementById('emoji-grid');
+  grid.innerHTML = EMOJIS[emojiCatAtual].map(e=>
+    `<button onclick="inserirEmoji('${e}')" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px;border-radius:6px;line-height:1" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">${e}</button>`
+  ).join('');
+}
+
+function inserirEmoji(emoji) {
+  const inp = document.getElementById('chat-input');
+  const pos = inp.selectionStart;
+  inp.value = inp.value.slice(0,pos) + emoji + inp.value.slice(inp.selectionEnd);
+  inp.selectionStart = inp.selectionEnd = pos + emoji.length;
+  inp.focus();
+}
+
+// Fechar picker ao clicar fora
+document.addEventListener('click', function(e) {
+  const picker = document.getElementById('emoji-picker');
+  if(picker && !picker.contains(e.target) && !e.target.closest('[onclick="toggleEmojiPicker()"]')) {
+    picker.style.display='none';
+  }
+});
 
 function abrirChatTel(tel,nome){
   let num=tel.replace(/\D/g,'');if(num.startsWith('0'))num=num.slice(1);if(!num.startsWith('55'))num='55'+num;if(num.length===12)num=num.slice(0,4)+'9'+num.slice(4);
