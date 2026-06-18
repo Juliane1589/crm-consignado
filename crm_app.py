@@ -1259,15 +1259,18 @@ function inicialAvatar(nome) {
 function htmlAvatar(nome, numero, cls='ci-avatar') {
   const bg = corAvatar(nome);
   const ini = inicialAvatar(nome);
-  if(fotosCache[numero]) {
-    return `<div class="${cls}" style="background:${bg}">${fotosCache[numero]==='none'?`<span>${ini}</span>`:`<img src="${fotosCache[numero]}" onerror="this.parentElement.innerHTML='<span>${ini}</span>';fotosCache['${numero}']='none'">`}</div>`;
+  if(fotosCache[numero] && fotosCache[numero] !== 'loading') {
+    const src = fotosCache[numero]==='none' ? '' : fotosCache[numero];
+    return `<div class="${cls}" style="background:${bg}">${src?`<img src="${src}" onerror="this.style.display='none'">`:''}<span>${ini}</span></div>`;
   }
-  // Busca foto em background
-  fetch(`/api/foto_perfil/${numero}`).then(r=>r.json()).then(d=>{
-    fotosCache[numero] = d.url || 'none';
-    renderListaMensagens();
-  }).catch(()=>{ fotosCache[numero]='none'; });
-  return `<div class="${cls}" style="background:${bg}"><span>${ini}</span></div>`;
+  if(!fotosCache[numero]) {
+    fotosCache[numero] = 'loading';
+    fetch('/api/foto_perfil/'+numero).then(r=>r.json()).then(d=>{
+      fotosCache[numero] = d.url || 'none';
+      document.querySelectorAll('[data-num="'+numero+'"] .ci-avatar span, [data-num="'+numero+'"] .cw-avatar span').forEach(el=>{ el.textContent=ini; });
+    }).catch(()=>{ fotosCache[numero]='none'; });
+  }
+  return '<div class="'+cls+'" style="background:'+bg+'"><span>'+ini+'</span></div>';
 }
 
 function toggleModoSelecao(cb) {
@@ -1321,8 +1324,9 @@ function renderListaMensagens() {
     const nome=cli?cli.nome:(c.nome!==c.numero?c.nome:c.numero);
     const avatar=htmlAvatar(nome,c.numero,'ci-avatar');
     const selCheck=modoSelecao?`<input type="checkbox" class="ci-check" ${contatosSelecionados.has(c.numero)?'checked':''} onclick="event.stopPropagation();toggleSelecao('${c.numero}',this)">`:'' ;
-    const previewTexto = (ultima?.texto||'').replace(/[\u{1F300}-\u{1FFFF}]/gu, m=>m); // mantém emojis
-    return `<div class="chat-item ${nl?'unread':''} ${chatAtual===c.numero?'active':''}" onclick="${modoSelecao?'':` abrirChat('${c.numero}','${nome.replace(/'/g,"\\'")}') `}">${selCheck}${avatar}<div class="ci-content"><div class="ci-header"><span class="ci-name">${nome}${nl?`<span class="ci-badge">${nl}</span>`:''}</span><span class="ci-time">${hora}</span></div><div class="ci-preview">${ultima?.dir==='sent'?'Você: ':''}${previewTexto}</div></div></div>`;
+    const onclickAttr = modoSelecao ? '' : `onclick="abrirChat('${c.numero}','${nome.replace(/'/g,"\\'")}')"`;
+    const previewTexto = (ultima?.texto||'').replace(/[\u{1F300}-\u{1FFFF}]/gu, m=>m);
+    return `<div class="chat-item ${nl?'unread':''} ${chatAtual===c.numero?'active':''}" data-num="${c.numero}" ${onclickAttr}>${selCheck}${avatar}<div class="ci-content"><div class="ci-header"><span class="ci-name">${nome}${nl?`<span class="ci-badge">${nl}</span>`:''}</span><span class="ci-time">${hora}</span></div><div class="ci-preview">${ultima?.dir==='sent'?'Você: ':''}${previewTexto}</div></div></div>`;
   }).join('');
 }
 
