@@ -470,18 +470,34 @@ def loop_monitor():
 # ── WHATSAPP ──────────────────────────────────────────────────────────────────
 def enviar_whatsapp(telefone, mensagem):
     numero = normalizar_numero(telefone)
+    # Usa requests para garantir UTF-8 correto com emojis
+    if REQUESTS_OK:
+        import requests as rlib
+        try:
+            r = rlib.post(
+                f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
+                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json; charset=utf-8"},
+                data=json.dumps({
+                    "messaging_product": "whatsapp", "to": numero,
+                    "type": "text", "text": {"body": mensagem}
+                }, ensure_ascii=False).encode('utf-8'),
+                timeout=30
+            )
+            return r.json()
+        except Exception as e: return {"erro": str(e)}
+    # Fallback urllib
     payload = json.dumps({
         "messaging_product": "whatsapp", "to": numero,
         "type": "text", "text": {"body": mensagem}
-    }).encode('utf-8')
+    }, ensure_ascii=False).encode('utf-8')
     req = urllib.request.Request(
         f"https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_ID}/messages",
         data=payload,
-        headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json; charset=utf-8"},
         method="POST"
     )
     try:
-        with urllib.request.urlopen(req) as resp: return json.loads(resp.read())
+        with urllib.request.urlopen(req) as resp: return json.loads(resp.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
         erro = e.read().decode('utf-8'); print(f"❌ Erro WhatsApp: {erro}"); return {"erro": erro}
     except Exception as e: return {"erro": str(e)}
@@ -618,9 +634,15 @@ input::placeholder,textarea::placeholder{color:var(--muted2)}
 .dash-section-title{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
 .chat-layout{display:flex;height:calc(100vh - 64px);gap:16px}
 .chat-list-col{width:320px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
-.chat-list-header{padding:14px 16px;border-bottom:1px solid var(--border);font-family:'Syne',sans-serif;font-size:14px;font-weight:700}
+.chat-list-header{padding:12px 14px;border-bottom:1px solid var(--border);font-family:'Syne',sans-serif;font-size:14px;font-weight:700}
 .chat-list-body{flex:1;overflow-y:auto}
-.chat-item{padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .12s;position:relative}
+.ci-avatar{width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Syne',sans-serif}
+.ci-avatar img{width:40px;height:40px;border-radius:50%;object-fit:cover}
+.ci-check{width:18px;height:18px;cursor:pointer;flex-shrink:0;accent-color:var(--accent)}
+.chat-item{padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .12s;position:relative;display:flex;align-items:center;gap:10px}
+.ci-content{flex:1;min-width:0}
+.cw-avatar{width:36px;height:36px;border-radius:50%;flex-shrink:0;object-fit:cover;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Syne',sans-serif}
+
 .chat-item:hover{background:var(--surface2)}.chat-item.active{background:var(--surface2)}.chat-item.unread{border-left:3px solid var(--accent)}
 .ci-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
 .ci-name{font-weight:600;font-size:13px}.ci-time{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)}
@@ -804,13 +826,23 @@ table.prev td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(-
   <div class="page-header"><div class="page-title">Mensagens</div><div class="page-sub">WhatsApp integrado</div></div>
   <div class="chat-layout">
     <div class="chat-list-col">
-      <div class="chat-list-header">Conversas</div>
+      <div class="chat-list-header">
+        Conversas
+        <input type="text" id="busca-conv" placeholder="🔍 Buscar conversa..." oninput="renderListaMensagens()" style="margin-top:8px;width:100%;font-size:12px;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);outline:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0;cursor:pointer">
+            <input type="checkbox" id="modo-selecao" onchange="toggleModoSelecao(this)" style="width:13px;height:13px"> Selecionar para disparo
+          </label>
+          <button id="btn-disparar-selecionados" class="btn btn-primary btn-sm" onclick="dispararSelecionados()" style="display:none">⚡ Disparar</button>
+        </div>
+      </div>
       <div class="chat-list-body" id="msg-lista"><div class="empty"><div class="empty-icon">◻</div><div class="empty-text">Nenhuma conversa ainda</div></div></div>
     </div>
     <div class="chat-win" id="chat-win">
       <div class="chat-win-empty" id="chat-empty"><div style="font-size:32px;opacity:.2">◻</div><div style="font-size:13px">Selecione uma conversa</div></div>
       <div id="chat-open" style="display:none;flex-direction:column;height:100%">
         <div class="cw-header">
+          <div id="chat-avatar-header" style="flex-shrink:0"></div>
           <div><div class="cw-contact-name" id="chat-nome"></div><div class="cw-contact-num" id="chat-num"></div></div>
         </div>
         <div id="chat-perfil" style="display:none;overflow-y:auto;max-height:160px;flex-shrink:0"></div>
@@ -1209,22 +1241,106 @@ function renderRetornos() {
 }
 
 // ── MENSAGENS ─────────────────────────────────────────────────────────────────
+let modoSelecao = false;
+let contatosSelecionados = new Set();
+const fotosCache = {};
+
+function corAvatar(nome) {
+  const cores = ['#7C5CFC','#3B82F6','#2ECC71','#F59E0B','#EF4444','#EC4899','#06B6D4'];
+  let h = 0; for(let i=0;i<nome.length;i++) h = nome.charCodeAt(i) + ((h<<5)-h);
+  return cores[Math.abs(h) % cores.length];
+}
+
+function inicialAvatar(nome) {
+  const p = nome.trim().split(/\s+/);
+  return p.length>=2 ? (p[0][0]+p[p.length-1][0]).toUpperCase() : nome.slice(0,2).toUpperCase();
+}
+
+function htmlAvatar(nome, numero, cls='ci-avatar') {
+  const bg = corAvatar(nome);
+  const ini = inicialAvatar(nome);
+  if(fotosCache[numero]) {
+    return `<div class="${cls}" style="background:${bg}">${fotosCache[numero]==='none'?`<span>${ini}</span>`:`<img src="${fotosCache[numero]}" onerror="this.parentElement.innerHTML='<span>${ini}</span>';fotosCache['${numero}']='none'">`}</div>`;
+  }
+  // Busca foto em background
+  fetch(`/api/foto_perfil/${numero}`).then(r=>r.json()).then(d=>{
+    fotosCache[numero] = d.url || 'none';
+    renderListaMensagens();
+  }).catch(()=>{ fotosCache[numero]='none'; });
+  return `<div class="${cls}" style="background:${bg}"><span>${ini}</span></div>`;
+}
+
+function toggleModoSelecao(cb) {
+  modoSelecao = cb.checked;
+  contatosSelecionados.clear();
+  document.getElementById('btn-disparar-selecionados').style.display = modoSelecao ? 'inline-flex' : 'none';
+  renderListaMensagens();
+}
+
+async function dispararSelecionados() {
+  if(!contatosSelecionados.size){ toast('Selecione ao menos uma conversa','error'); return; }
+  const template = prompt('Nome do template aprovado:\nEx: credito_consignado_servidores');
+  if(!template) return;
+  let enviados=0, erros=0;
+  for(const numero of contatosSelecionados) {
+    const cli = clientes.find(c=>{let t=(c.tel1||'').replace(/\D/g,'');if(!t.startsWith('55'))t='55'+t;if(t.length===12)t=t.slice(0,4)+'9'+t.slice(4);return t===numero;});
+    const nome = cli ? cli.nome : numero;
+    try {
+      const r = await fetch('/api/disparo/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telefone:numero,template,nome})});
+      const d = await r.json();
+      if(d.messages||d.ok) enviados++; else erros++;
+    } catch(e){ erros++; }
+    await new Promise(res=>setTimeout(res,2000));
+  }
+  toast(`Disparo concluído: ${enviados} enviados, ${erros} erros`);
+  contatosSelecionados.clear();
+  document.getElementById('modo-selecao').checked=false;
+  modoSelecao=false;
+  document.getElementById('btn-disparar-selecionados').style.display='none';
+  renderListaMensagens();
+}
+
 async function carregarMensagens() {
   try{const r=await fetch('/api/mensagens');conversas=await r.json();renderListaMensagens();atualizarBadgeMsg();}catch(e){}
 }
 
 function renderListaMensagens() {
   const el=document.getElementById('msg-lista');
-  const lista=Object.values(conversas).sort((a,b)=>{const ua=a.msgs?.slice(-1)[0]?.ts||0,ub=b.msgs?.slice(-1)[0]?.ts||0;return ub-ua;});
-  if(!lista.length){el.innerHTML='<div class="empty"><div class="empty-icon">◻</div><div class="empty-text">Nenhuma conversa ainda</div></div>';return;}
+  const q = (document.getElementById('busca-conv')?.value||'').toLowerCase().trim();
+  let lista=Object.values(conversas).sort((a,b)=>{const ua=a.msgs?.slice(-1)[0]?.ts||0,ub=b.msgs?.slice(-1)[0]?.ts||0;return ub-ua;});
+  if(q) lista=lista.filter(c=>{
+    const cli=clientes.find(x=>{const t=(x.tel1||'').replace(/\D/g,'');return c.numero.endsWith(t.replace(/^55/,''));});
+    const nome=cli?cli.nome:(c.nome||c.numero);
+    return nome.toLowerCase().includes(q)||c.numero.includes(q);
+  });
+  if(!lista.length){el.innerHTML='<div class="empty"><div class="empty-icon">◻</div><div class="empty-text">Nenhuma conversa encontrada</div></div>';return;}
   el.innerHTML=lista.map(c=>{
     const ultima=c.msgs?.slice(-1)[0],nl=(c.msgs||[]).filter(m=>m.dir==='recv'&&!m.lida).length;
-    const hora=ultima?new Date(ultima.ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
-    const cli=clientes.find(x=>{const t=x.tel1?.replace(/\D/g,'');return t&&c.numero.endsWith(t);});
+    const hora=ultima?tsRelativo(ultima.ts):'';
+    const cli=clientes.find(x=>{const t=(x.tel1||'').replace(/\D/g,'');let n=t;if(!n.startsWith('55'))n='55'+n;if(n.length===12)n=n.slice(0,4)+'9'+n.slice(4);return n===c.numero;});
     const nome=cli?cli.nome:(c.nome!==c.numero?c.nome:c.numero);
-    return `<div class="chat-item ${nl?'unread':''} ${chatAtual===c.numero?'active':''}" onclick="abrirChat('${c.numero}','${nome}')"><div class="ci-header"><span class="ci-name">${nome}${nl?`<span class="ci-badge">${nl}</span>`:''}</span><span class="ci-time">${hora}</span></div><div class="ci-preview">${ultima?.dir==='sent'?'Você: ':''}${ultima?.texto||''}</div></div>`;
+    const avatar=htmlAvatar(nome,c.numero,'ci-avatar');
+    const selCheck=modoSelecao?`<input type="checkbox" class="ci-check" ${contatosSelecionados.has(c.numero)?'checked':''} onclick="event.stopPropagation();toggleSelecao('${c.numero}',this)">`:'' ;
+    const previewTexto = (ultima?.texto||'').replace(/[\u{1F300}-\u{1FFFF}]/gu, m=>m); // mantém emojis
+    return `<div class="chat-item ${nl?'unread':''} ${chatAtual===c.numero?'active':''}" onclick="${modoSelecao?'':` abrirChat('${c.numero}','${nome.replace(/'/g,"\\'")}') `}">${selCheck}${avatar}<div class="ci-content"><div class="ci-header"><span class="ci-name">${nome}${nl?`<span class="ci-badge">${nl}</span>`:''}</span><span class="ci-time">${hora}</span></div><div class="ci-preview">${ultima?.dir==='sent'?'Você: ':''}${previewTexto}</div></div></div>`;
   }).join('');
 }
+
+function toggleSelecao(numero, cb) {
+  if(cb.checked) contatosSelecionados.add(numero); else contatosSelecionados.delete(numero);
+  const btn=document.getElementById('btn-disparar-selecionados');
+  btn.textContent=`⚡ Disparar (${contatosSelecionados.size})`;
+}
+
+function tsRelativo(ts) {
+  const diff = Date.now()-ts, min=Math.floor(diff/60000), h=Math.floor(diff/3600000);
+  if(diff<60000) return 'agora';
+  if(min<60) return `${min}min`;
+  if(h<24) return `${h}h`;
+  return new Date(ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+}
+
+function escHtml(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');}
 
 function abrirChatTel(tel,nome){
   let num=tel.replace(/\D/g,'');if(num.startsWith('0'))num=num.slice(1);if(!num.startsWith('55'))num='55'+num;if(num.length===12)num=num.slice(0,4)+'9'+num.slice(4);
@@ -1237,6 +1353,9 @@ function abrirChat(numero,nome){
   const nomeExibir=cli?cli.nome:(conversas[numero]?.nome||nome);
   document.getElementById('chat-nome').textContent=nomeExibir;
   document.getElementById('chat-num').textContent=numero;
+  // Avatar no header
+  const avatarEl=document.getElementById('chat-avatar-header');
+  if(avatarEl) avatarEl.innerHTML=htmlAvatar(nomeExibir,numero,'cw-avatar');
   const perfil=document.getElementById('chat-perfil');
   if(cli){
     const sb=cli.fechou==='sim'?'badge-fechou':cli.fechou==='carteira'?'badge-carteira':'badge-negoc';
@@ -1261,7 +1380,7 @@ function renderChat(){
   el.innerHTML=conv.msgs.map(m=>{
     const d=new Date(m.ts),dataStr=d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}),hora=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     let sep='';if(dataStr!==ultimaData){ultimaData=dataStr;sep=`<div style="text-align:center;margin:8px 0"><span style="background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">${dataStr}</span></div>`;}
-    return `${sep}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">${m.imagem_id?`<img src="/api/imagem/${m.imagem_id}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:4px" loading="lazy">`:''} ${m.doc_id?`<a href="/api/documento/${m.doc_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--blue-text);text-decoration:none;font-size:12px">📄 ${m.doc_nome||'Documento'}</a>`:''} ${m.texto&&!m.texto.startsWith('[IMAGEM:')&&!m.texto.startsWith('[DOCUMENTO:')?m.texto:''}<div class="msg-time">${hora}</div></div>`;
+    return `${sep}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">${m.imagem_id?`<img src="/api/imagem/${m.imagem_id}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:4px" loading="lazy">`:''} ${m.doc_id?`<a href="/api/documento/${m.doc_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--blue-text);text-decoration:none;font-size:12px">📄 ${m.doc_nome||'Documento'}</a>`:''} ${m.texto&&!m.texto.startsWith('[IMAGEM:')&&!m.texto.startsWith('[DOCUMENTO:')?escHtml(m.texto):''}<div class="msg-time">${hora}</div></div>`;
   }).join('');
   el.scrollTop=el.scrollHeight;
 }
@@ -1603,7 +1722,30 @@ def api_reajustes_visualizar():
     marcar_reajuste_visto(body.get('id'))
     return jsonify({"ok": True})
 
-@app.route('/api/imagem/<imagem_id>', methods=['GET'])
+@app.route('/api/foto_perfil/<numero>', methods=['GET'])
+def api_foto_perfil(numero):
+    """Busca foto de perfil do contato via WhatsApp Business API"""
+    try:
+        if not REQUESTS_OK:
+            return Response('{}', status=404, mimetype='application/json')
+        import requests as rlib
+        # Busca o profile picture URL
+        r = rlib.get(
+            f"https://graph.facebook.com/v20.0/{numero}",
+            params={"fields": "profile_pic_url"},
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            timeout=10
+        )
+        data = r.json()
+        pic_url = data.get('profile_pic_url', '')
+        if not pic_url:
+            return Response(json.dumps({"url": ""}), status=200, mimetype='application/json')
+        return Response(json.dumps({"url": pic_url}, ensure_ascii=False), mimetype='application/json')
+    except Exception as e:
+        print(f"Erro foto_perfil: {e}")
+        return Response(json.dumps({"url": ""}), status=200, mimetype='application/json')
+
+
 def api_imagem(imagem_id):
     try:
         req1 = urllib.request.Request(f"https://graph.facebook.com/v20.0/{imagem_id}",
