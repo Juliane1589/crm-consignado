@@ -1,4 +1,4 @@
-a"""
+"""
 CRM Consignado - Juliane
 Railway + PostgreSQL + Flask + Gunicorn
 + Radar de Reajustes (monitor em background thread)
