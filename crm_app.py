@@ -1,4 +1,4 @@
-"""
+a"""
 CRM Consignado - Juliane
 Railway + PostgreSQL + Flask + Gunicorn
 + Radar de Reajustes (monitor em background thread)
@@ -657,8 +657,13 @@ input::placeholder,textarea::placeholder{color:var(--muted2)}
 .msg-bubble{max-width:72%;padding:9px 14px;border-radius:10px;font-size:13px;line-height:1.5;word-break:break-word}
 .msg-bubble.recv{background:var(--surface);border:1px solid var(--border);align-self:flex-start;border-radius:2px 10px 10px 10px}
 .msg-bubble.sent{background:var(--accent);color:#fff;align-self:flex-end;border-radius:10px 2px 10px 10px}
-.msg-time{font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,.5);margin-top:3px;text-align:right}
+.msg-time{font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,.5);margin-top:3px;text-align:right;display:flex;align-items:center;justify-content:flex-end;gap:4px}
 .msg-bubble.recv .msg-time{color:var(--muted)}
+.msg-status{font-size:11px;line-height:1}
+.msg-status.sent{color:rgba(255,255,255,.5)}
+.msg-status.delivered{color:rgba(255,255,255,.7)}
+.msg-status.read{color:#53d1f5}
+.msg-status.failed{color:var(--red-text)}
 .cw-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;position:relative}
 .cw-footer input{flex:1}.cw-footer .btn{flex-shrink:0}
 .ecat{background:none;border:none;font-size:18px;cursor:pointer;padding:4px 6px;border-radius:6px;opacity:.6}
@@ -1503,7 +1508,13 @@ function renderChat(){
     const textoExibir = m.texto && !m.texto.startsWith('[IMAGEM:') && !m.texto.startsWith('[DOCUMENTO:') ? escHtml(m.texto) : '';
     const imgHtml = m.imagem_id ? `<img src="/api/imagem/${m.imagem_id}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:4px" loading="lazy">` : '';
     const docHtml = m.doc_id ? `<a href="/api/documento/${m.doc_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--blue-text);text-decoration:none;font-size:12px">📄 ${m.doc_nome||'Documento'}</a>` : '';
-    return `${sep}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">${imgHtml}${docHtml}${textoExibir?`<span style="white-space:pre-wrap">${textoExibir}</span>`:''}<div class="msg-time">${hora}</div></div>`;
+    let statusHtml = '';
+    if(m.dir==='sent'){
+      const st=m.status||'sent';
+      const icons={sent:'✓',delivered:'✓✓',read:'✓✓',failed:'✗'};
+      statusHtml=`<span class="msg-status ${st}" title="${st}">${icons[st]||'✓'}</span>`;
+    }
+    return `${sep}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">${imgHtml}${docHtml}${textoExibir?`<span style="white-space:pre-wrap">${textoExibir}</span>`:''}<div class="msg-time"><span>${hora}</span>${statusHtml}</div></div>`;
   }).join('');
   el.scrollTop=el.scrollHeight;
 }
@@ -1511,7 +1522,11 @@ function renderChat(){
 async function enviarResposta(){
   const input=document.getElementById('chat-input'),msg=input.value.trim();if(!msg||!chatAtual)return;input.value='';
   try{const r=await fetch('/api/whatsapp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telefone:chatAtual,mensagem:msg,salvar:true})});const d=await r.json();
-  if(d.messages||d.ok){if(!conversas[chatAtual])conversas[chatAtual]={numero:chatAtual,nome:chatAtual,msgs:[]};conversas[chatAtual].msgs.push({dir:'sent',texto:msg,ts:Date.now(),lida:true});renderChat();renderListaMensagens();}
+  if(d.messages||d.ok){
+    const msgId=d.messages?d.messages[0]?.id:'';
+    if(!conversas[chatAtual])conversas[chatAtual]={numero:chatAtual,nome:chatAtual,msgs:[]};
+    conversas[chatAtual].msgs.push({dir:'sent',texto:msg,ts:Date.now(),lida:true,status:'sent',msg_id:msgId});
+    renderChat();renderListaMensagens();}
   else toast('Erro ao enviar: '+(d.erro||JSON.stringify(d)),'error');}catch(e){toast('Erro de conexão','error');}
 }
 
@@ -1777,7 +1792,37 @@ def webhook_receive():
     try:
         for entry in body.get('entry', []):
             for change in entry.get('changes', []):
-                for msg in change.get('value', {}).get('messages', []):
+                value = change.get('value', {})
+
+                # ── STATUS DE ENTREGA ─────────────────────────────────────────
+                for status in value.get('statuses', []):
+                    msg_id   = status.get('id', '')
+                    st_novo  = status.get('status', '')  # sent, delivered, read, failed
+                    recipiente = normalizar_numero(status.get('recipient_id', ''))
+                    if not msg_id or not st_novo or not recipiente:
+                        continue
+                    try:
+                        msgs = carregar_mensagens(); conv = msgs['conversas']
+                        if recipiente in conv:
+                            atualizado = False
+                            for m in conv[recipiente].get('msgs', []):
+                                if m.get('msg_id') == msg_id:
+                                    # Só avança (nunca retrocede: read > delivered > sent)
+                                    ordem = ['sent','delivered','read','failed']
+                                    atual_idx = ordem.index(m.get('status','sent')) if m.get('status','sent') in ordem else 0
+                                    novo_idx  = ordem.index(st_novo) if st_novo in ordem else 0
+                                    if novo_idx > atual_idx or st_novo == 'failed':
+                                        m['status'] = st_novo
+                                        atualizado = True
+                                    break
+                            if atualizado:
+                                salvar_conversa(recipiente, conv[recipiente])
+                                print(f"STATUS {st_novo} → {recipiente} msg {msg_id}")
+                    except Exception as es:
+                        print(f"Erro status update: {es}")
+
+                # ── MENSAGENS RECEBIDAS ───────────────────────────────────────
+                for msg in value.get('messages', []):
                     remetente = msg.get('from', '')
                     texto     = msg.get('text', {}).get('body', '')
                     tipo      = msg.get('type', 'text')
@@ -1984,9 +2029,12 @@ def api_whatsapp():
     if salvar and (resultado.get('messages') or resultado.get('ok')):
         numero = ''.join(filter(str.isdigit, telefone))
         if not numero.startswith('55'): numero = '55' + numero
+        msg_id = ''
+        if resultado.get('messages'):
+            msg_id = resultado['messages'][0].get('id', '')
         msgs = carregar_mensagens(); conv = msgs['conversas']
         if numero not in conv: conv[numero] = {'numero':numero,'nome':numero,'msgs':[]}
-        conv[numero]['msgs'].append({'dir':'sent','texto':mensagem,'ts':int(time.time()*1000),'lida':True})
+        conv[numero]['msgs'].append({'dir':'sent','texto':mensagem,'ts':int(time.time()*1000),'lida':True,'status':'sent','msg_id':msg_id})
         salvar_conversa(numero, conv[numero])
     return Response(json.dumps(resultado, ensure_ascii=False), mimetype='application/json')
 
