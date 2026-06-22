@@ -50,8 +50,19 @@ def normalizar_numero(numero):
     n = ''.join(filter(str.isdigit, numero))
     if n.startswith('0'): n = n[1:]
     if not n.startswith('55'): n = '55' + n
+    # Garante sempre 13 dígitos (55 + DDD 2 + 9 + número 8)
     if len(n) == 12: n = n[:4] + '9' + n[4:]
     return n
+
+def normalizar_numero_busca(numero):
+    """Retorna lista com as duas variações do número (com e sem 9) para busca no banco."""
+    n = normalizar_numero(numero)
+    # Variação sem o 9: ex 554599401477 (12 dígitos)
+    if len(n) == 13 and n[4] == '9':
+        sem9 = n[:4] + n[5:]
+    else:
+        sem9 = n
+    return [n, sem9]
 
 def init_db():
     conn = get_conn()
@@ -1512,7 +1523,8 @@ function renderChat(){
     if(m.dir==='sent'){
       const st=m.status||'sent';
       const icons={sent:'✓',delivered:'✓✓',read:'✓✓',failed:'✗'};
-      statusHtml=`<span class="msg-status ${st}" title="${st}">${icons[st]||'✓'}</span>`;
+      const titulo = st==='failed' ? (m.erro_msg||'Mensagem não entregue — janela fechada ou número inválido') : st;
+      statusHtml=`<span class="msg-status ${st}" title="${titulo}">${icons[st]||'✓'}</span>`;
     }
     return `${sep}<div class="msg-bubble ${m.dir==='recv'?'recv':'sent'}">${imgHtml}${docHtml}${textoExibir?`<span style="white-space:pre-wrap">${textoExibir}</span>`:''}<div class="msg-time"><span>${hora}</span>${statusHtml}</div></div>`;
   }).join('');
@@ -1713,7 +1725,17 @@ async function iniciarDisparo(){
     if(cancelar){addLog('Cancelado.','erro');break;}
     const c=clientesParaDisparar[i],nomeUsar=c.nome.split(' ')[0];
     try{const r=await fetch('/api/disparo/enviar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telefone:c.tel1,template,nome:nomeUsar})});const d=await r.json();
-    if(d.messages||d.ok){enviados++;logDetalhado.push({ok:true,nome:c.nome,tel:c.tel1});addLog(`✓ ${c.nome}`);}else{erros++;const motivo=d.erro?JSON.parse(d.erro)?.error?.message||d.erro:JSON.stringify(d);logDetalhado.push({ok:false,nome:c.nome,tel:c.tel1,erro:motivo});addLog(`✕ ${c.nome} — ${motivo}`,'erro');}}catch(e){erros++;addLog(`✕ ${c.nome} — erro de conexão`,'erro');}
+    if(d.messages||d.ok){enviados++;logDetalhado.push({ok:true,nome:c.nome,tel:c.tel1});addLog(`✓ ${c.nome}`);}else{
+      erros++;
+      let motivo='Rejeitado pela Meta';
+      try{
+        if(d.erro){const ep=typeof d.erro==='string'?JSON.parse(d.erro):d.erro;motivo=ep?.error?.message||ep?.message||d.erro;}
+        else if(d.error){motivo=d.error?.message||JSON.stringify(d.error);}
+        else{motivo=JSON.stringify(d);}
+      }catch(ex){motivo=String(d.erro||d);}
+      logDetalhado.push({ok:false,nome:c.nome,tel:c.tel1,erro:motivo});
+      addLog(`✕ ${c.nome} (${c.tel1}) — ${motivo}`,'erro');
+    }}catch(e){erros++;addLog(`✕ ${c.nome} — erro de conexão`,'erro');}
     atualizarProgresso();
     if(i<clientesParaDisparar.length-1){addLog(`Aguardando ${intervalo}s...`,'info');await new Promise(r=>setTimeout(r,intervalo*1000));}
   }
@@ -1803,11 +1825,16 @@ def webhook_receive():
                         continue
                     try:
                         msgs = carregar_mensagens(); conv = msgs['conversas']
-                        if recipiente in conv:
+                        # Busca conversa com as duas variações do número (com e sem 9)
+                        chave = None
+                        for variacao in normalizar_numero_busca(recipiente):
+                            if variacao in conv:
+                                chave = variacao
+                                break
+                        if chave:
                             atualizado = False
-                            for m in conv[recipiente].get('msgs', []):
+                            for m in conv[chave].get('msgs', []):
                                 if m.get('msg_id') == msg_id:
-                                    # Só avança (nunca retrocede: read > delivered > sent)
                                     ordem = ['sent','delivered','read','failed']
                                     atual_idx = ordem.index(m.get('status','sent')) if m.get('status','sent') in ordem else 0
                                     novo_idx  = ordem.index(st_novo) if st_novo in ordem else 0
@@ -1816,8 +1843,8 @@ def webhook_receive():
                                         atualizado = True
                                     break
                             if atualizado:
-                                salvar_conversa(recipiente, conv[recipiente])
-                                print(f"STATUS {st_novo} → {recipiente} msg {msg_id}")
+                                salvar_conversa(chave, conv[chave])
+                                print(f"STATUS {st_novo} → {chave} msg {msg_id}")
                     except Exception as es:
                         print(f"Erro status update: {es}")
 
@@ -2005,7 +2032,42 @@ def api_disparos_salvar():
 @app.route('/api/disparo/enviar', methods=['POST'])
 def api_disparo_enviar():
     body = request.get_json(force=True)
-    resultado = enviar_template(body.get('telefone',''), body.get('template',''), body.get('nome',''))
+    telefone = body.get('telefone','')
+    template_name = body.get('template','')
+    nome_cliente = body.get('nome','')
+    resultado = enviar_template(telefone, template_name, nome_cliente)
+    # Salva na conversa do cliente
+    try:
+        msg_id = ''
+        status_envio = 'failed'
+        erro_msg = ''
+        if resultado.get('messages'):
+            msg_id = resultado['messages'][0].get('id', '')
+            status_envio = 'sent'
+        else:
+            try:
+                erro_raw = resultado.get('erro', '')
+                if erro_raw:
+                    err_obj = json.loads(erro_raw) if isinstance(erro_raw, str) else erro_raw
+                    erro_msg = err_obj.get('error', {}).get('message', str(erro_raw))
+                elif resultado.get('error'):
+                    erro_msg = resultado['error'].get('message', str(resultado))
+            except:
+                erro_msg = str(resultado)
+        numero = normalizar_numero(telefone)
+        msgs = carregar_mensagens(); conv = msgs['conversas']
+        chave = numero
+        for variacao in normalizar_numero_busca(telefone):
+            if variacao in conv:
+                chave = variacao
+                break
+        if chave not in conv: conv[chave] = {'numero':chave,'nome':nome_cliente,'msgs':[]}
+        entrada = {'dir':'sent','texto':f'[TEMPLATE: {template_name}]','ts':int(time.time()*1000),'lida':True,'status':status_envio,'msg_id':msg_id}
+        if erro_msg: entrada['erro_msg'] = erro_msg
+        conv[chave]['msgs'].append(entrada)
+        salvar_conversa(chave, conv[chave])
+    except Exception as e:
+        print(f"Erro ao salvar disparo na conversa: {e}")
     return Response(json.dumps(resultado, ensure_ascii=False), mimetype='application/json')
 
 @app.route('/api/disparo/cancelar', methods=['POST'])
@@ -2026,16 +2088,38 @@ def api_whatsapp():
     body = request.get_json(force=True)
     telefone = body.get('telefone',''); mensagem = body.get('mensagem',''); salvar = body.get('salvar', False)
     resultado = enviar_whatsapp(telefone, mensagem)
-    if salvar and (resultado.get('messages') or resultado.get('ok')):
-        numero = ''.join(filter(str.isdigit, telefone))
-        if not numero.startswith('55'): numero = '55' + numero
-        msg_id = ''
-        if resultado.get('messages'):
-            msg_id = resultado['messages'][0].get('id', '')
+    msg_id = ''
+    status_envio = 'failed'
+    erro_msg = ''
+    if resultado.get('messages'):
+        msg_id = resultado['messages'][0].get('id', '')
+        status_envio = 'sent'
+    else:
+        # Extrai motivo do erro da resposta da Meta
+        try:
+            erro_raw = resultado.get('erro', '')
+            if erro_raw:
+                import json as _j
+                err_obj = _j.loads(erro_raw) if isinstance(erro_raw, str) else erro_raw
+                erro_msg = err_obj.get('error', {}).get('message', str(erro_raw))
+            elif resultado.get('error'):
+                erro_msg = resultado['error'].get('message', str(resultado))
+        except:
+            erro_msg = str(resultado)
+    if salvar:
+        numero = normalizar_numero(telefone)
         msgs = carregar_mensagens(); conv = msgs['conversas']
-        if numero not in conv: conv[numero] = {'numero':numero,'nome':numero,'msgs':[]}
-        conv[numero]['msgs'].append({'dir':'sent','texto':mensagem,'ts':int(time.time()*1000),'lida':True,'status':'sent','msg_id':msg_id})
-        salvar_conversa(numero, conv[numero])
+        chave = numero
+        for variacao in normalizar_numero_busca(telefone):
+            if variacao in conv:
+                chave = variacao
+                break
+        if chave not in conv: conv[chave] = {'numero':chave,'nome':chave,'msgs':[]}
+        entrada = {'dir':'sent','texto':mensagem,'ts':int(time.time()*1000),'lida':True,'status':status_envio,'msg_id':msg_id}
+        if erro_msg: entrada['erro_msg'] = erro_msg
+        conv[chave]['msgs'].append(entrada)
+        salvar_conversa(chave, conv[chave])
+        salvar_conversa(chave, conv[chave])
     return Response(json.dumps(resultado, ensure_ascii=False), mimetype='application/json')
 
 @app.route('/api/mensagens/lidas', methods=['POST'])
