@@ -1840,6 +1840,22 @@ def webhook_receive():
                                     novo_idx  = ordem.index(st_novo) if st_novo in ordem else 0
                                     if novo_idx > atual_idx or st_novo == 'failed':
                                         m['status'] = st_novo
+                                        # Captura motivo do erro se houver
+                                        if st_novo == 'failed':
+                                            erros_meta = status.get('errors', [])
+                                            if erros_meta:
+                                                codigo = erros_meta[0].get('code', 0)
+                                                msg_erro = erros_meta[0].get('message', '')
+                                                detalhes = erros_meta[0].get('error_data', {}).get('details', '')
+                                                # Mensagens amigáveis por código
+                                                if codigo == 131047:
+                                                    m['erro_msg'] = 'Janela fechada — use template para reabrir conversa'
+                                                elif codigo == 131026:
+                                                    m['erro_msg'] = 'Número não tem WhatsApp ativo'
+                                                elif codigo == 131000:
+                                                    m['erro_msg'] = 'Erro genérico da Meta — tente novamente'
+                                                else:
+                                                    m['erro_msg'] = detalhes or msg_erro or f'Erro {codigo}'
                                         atualizado = True
                                     break
                             if atualizado:
